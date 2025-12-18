@@ -121,7 +121,6 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 # --- GRAFICI ---
                 tab1, tab2, tab3 = st.tabs(["🌡️ Temp & Neve", "🌬️ Vento & Zero", "📉 Pressione"])
                 
-                # Formattatore data comune
                 date_fmt = mdates.DateFormatter('%d/%m %Hh')
                 
                 # TAB 1: TEMP + PRECIPITAZIONI
@@ -139,7 +138,6 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax1.grid(True, alpha=0.3)
                     ax1.legend(loc='upper left', fontsize=8)
                     
-                    # Data visibile sotto
                     ax1.xaxis.set_major_formatter(date_fmt)
                     ax1.tick_params(labelbottom=True)
 
@@ -152,15 +150,23 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                         bars = ax2b.bar(times_index[snow_idx], avg_snow[snow_idx], width=0.04, 
                                 color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
                         
-                        # Spaziatura neve
+                        # --- FIX SOVRAPPOSIZIONE NUMERI ---
+                        # Se ho tanti giorni (es. 7 o 10), ruoto le etichette di 90° e riduco il font
+                        is_long_range = giorni > 3
+                        rotation_val = 90 if is_long_range else 0
+                        font_val = 6 if is_long_range else 7
+                        threshold_val = 0.5 if is_long_range else 0.3 # Meno etichette se zoom lontano
+                        
+                        # Spazio verticale extra per le etichette verticali
                         max_h_snow = np.max(avg_snow[snow_idx])
-                        ax2b.set_ylim(0, max_h_snow * 1.3) 
+                        ax2b.set_ylim(0, max_h_snow * (1.5 if is_long_range else 1.3))
 
                         for rect in bars:
                             h = rect.get_height()
-                            if h > 0.3: 
+                            if h > threshold_val: 
                                 ax2b.text(rect.get_x() + rect.get_width()/2., 1.05*h,
-                                        f'{h:.1f}', ha='center', va='bottom', fontsize=7, color='darkblue', fontweight='bold')
+                                        f'{h:.1f}', ha='center', va='bottom', fontsize=font_val, 
+                                        rotation=rotation_val, color='darkblue', fontweight='bold')
 
                     ax2.set_ylabel("Pioggia (mm)", color="dodgerblue")
                     ax2b.set_ylabel("Neve (cm)", color="darkblue")
@@ -180,7 +186,6 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax3.legend(loc='upper left', fontsize=8)
                     ax3.grid(True, alpha=0.3)
                     
-                    # Data visibile sotto
                     ax3.xaxis.set_major_formatter(date_fmt)
                     ax3.tick_params(labelbottom=True)
                     
