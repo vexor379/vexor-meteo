@@ -126,7 +126,6 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 
                 # TAB 1: TEMP + PRECIPITAZIONI
                 with tab1:
-                    # Aumento spazio verticale (figsize)
                     fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
                     
                     # Grafico SOPRA (Temp)
@@ -140,7 +139,7 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax1.grid(True, alpha=0.3)
                     ax1.legend(loc='upper left', fontsize=8)
                     
-                    # MODIFICA: Mostro data anche sotto al grafico sopra
+                    # Data visibile sotto
                     ax1.xaxis.set_major_formatter(date_fmt)
                     ax1.tick_params(labelbottom=True)
 
@@ -153,14 +152,13 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                         bars = ax2b.bar(times_index[snow_idx], avg_snow[snow_idx], width=0.04, 
                                 color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
                         
-                        # MODIFICA: Spaziatura etichette neve
-                        # Aumento il limite Y per fare spazio ai numeri
+                        # Spaziatura neve
                         max_h_snow = np.max(avg_snow[snow_idx])
-                        ax2b.set_ylim(0, max_h_snow * 1.3) # +30% di spazio sopra
+                        ax2b.set_ylim(0, max_h_snow * 1.3) 
 
                         for rect in bars:
                             h = rect.get_height()
-                            if h > 0.3: # Scrivo solo se rilevante
+                            if h > 0.3: 
                                 ax2b.text(rect.get_x() + rect.get_width()/2., 1.05*h,
                                         f'{h:.1f}', ha='center', va='bottom', fontsize=7, color='darkblue', fontweight='bold')
 
@@ -182,7 +180,7 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax3.legend(loc='upper left', fontsize=8)
                     ax3.grid(True, alpha=0.3)
                     
-                    # MODIFICA: Data visibile anche qui
+                    # Data visibile sotto
                     ax3.xaxis.set_major_formatter(date_fmt)
                     ax3.tick_params(labelbottom=True)
                     
@@ -199,4 +197,11 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 # TAB 3: PRESSIONE
                 with tab3:
                     fig3, ax5 = plt.subplots(figsize=(10, 6))
-                    ax5.plot(times_index,
+                    ax5.plot(times_index, avg_press, color="black", lw=2)
+                    ax5.set_ylabel("hPa")
+                    ax5.grid(True)
+                    ax5.xaxis.set_major_formatter(date_fmt)
+                    st.pyplot(fig3)
+                
+        except Exception as e:
+            st.error(f"Errore tecnico: {e}")
