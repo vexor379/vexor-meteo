@@ -16,7 +16,7 @@ col1, col2 = st.columns([3, 1])
 with col1:
     citta_scelta = st.text_input("Località:", value="Prato Nevoso")
 with col2:
-    giorni = st.selectbox("Durata:", [3, 7, 10], index=0)
+    giorni = st.selectbox("Durata:", [3, 7, 10], index=1) # Default su 7gg come richiesto
 
 if st.button("Lancia Analisi 🚀", type="primary"):
     
@@ -125,7 +125,8 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 
                 # TAB 1: TEMP + PRECIPITAZIONI
                 with tab1:
-                    fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
+                    # MODIFICA 1: Ingrandimento Orizzontale (figsize passa da 10 a 14)
+                    fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
                     
                     # Grafico SOPRA (Temp)
                     df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
@@ -142,23 +143,25 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax1.tick_params(labelbottom=True)
 
                     # Grafico SOTTO (Pioggia/Neve)
-                    ax2.bar(times_index, avg_precip, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
+                    # MODIFICA 2: LOGICA ESCLUSIVA (Se nevica, azzero la pioggia nel grafico)
+                    snow_mask = avg_snow > 0.1
+                    precip_to_plot = avg_precip.copy()
+                    precip_to_plot[snow_mask] = 0 # Nascondo la barra blu se c'è quella ciano
+
+                    ax2.bar(times_index, precip_to_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
                     
                     ax2b = ax2.twinx()
-                    snow_idx = avg_snow > 0.1
-                    if any(snow_idx):
-                        bars = ax2b.bar(times_index[snow_idx], avg_snow[snow_idx], width=0.04, 
+                    if any(snow_mask):
+                        bars = ax2b.bar(times_index[snow_mask], avg_snow[snow_mask], width=0.04, 
                                 color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
                         
-                        # --- FIX SOVRAPPOSIZIONE NUMERI ---
-                        # Se ho tanti giorni (es. 7 o 10), ruoto le etichette di 90° e riduco il font
+                        # Fix sovrapposizione numeri
                         is_long_range = giorni > 3
                         rotation_val = 90 if is_long_range else 0
                         font_val = 6 if is_long_range else 7
-                        threshold_val = 0.5 if is_long_range else 0.3 # Meno etichette se zoom lontano
+                        threshold_val = 0.5 if is_long_range else 0.3 
                         
-                        # Spazio verticale extra per le etichette verticali
-                        max_h_snow = np.max(avg_snow[snow_idx])
+                        max_h_snow = np.max(avg_snow[snow_mask])
                         ax2b.set_ylim(0, max_h_snow * (1.5 if is_long_range else 1.3))
 
                         for rect in bars:
@@ -176,7 +179,8 @@ if st.button("Lancia Analisi 🚀", type="primary"):
 
                 # TAB 2: VENTO + ZERO TERMICO
                 with tab2:
-                    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+                    # Anche qui allargo per coerenza (14)
+                    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
                     
                     # Grafico SOPRA (Vento)
                     ax3.plot(times_index, avg_wind, color="blue", label="Media", lw=2)
@@ -201,7 +205,7 @@ if st.button("Lancia Analisi 🚀", type="primary"):
 
                 # TAB 3: PRESSIONE
                 with tab3:
-                    fig3, ax5 = plt.subplots(figsize=(10, 6))
+                    fig3, ax5 = plt.subplots(figsize=(14, 6))
                     ax5.plot(times_index, avg_press, color="black", lw=2)
                     ax5.set_ylabel("hPa")
                     ax5.grid(True)
