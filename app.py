@@ -6,21 +6,21 @@ import matplotlib.dates as mdates
 import numpy as np
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Pro", page_icon="❄️", layout="centered")
+st.set_page_config(page_title="Vexor Meteo Ultimate", page_icon="🏔️", layout="centered")
 
-st.title("🌍 VEXOR METEO - ANALYTICS")
-st.write("Analisi Multi-Modello (GFS, ECMWF, ICON, JMA)")
+st.title("🌍 VEXOR METEO ULTIMATE")
+st.write("Stazione Meteo Tascabile Multi-Modello")
 
 # --- INPUT ---
 col1, col2 = st.columns([3, 1])
 with col1:
     citta_scelta = st.text_input("Località:", value="Prato Nevoso")
 with col2:
-    giorni = st.selectbox("Durata:", [3, 7], index=0)
+    giorni = st.selectbox("Durata:", [3, 7, 10], index=0)
 
-if st.button("Lancia Analisi 🚀", type="primary"):
+if st.button("Lancia Analisi Completa 🚀", type="primary"):
     
-    with st.spinner(f'📡 Tech sta triangolando i dati per {citta_scelta}...'):
+    with st.spinner(f'📡 Tech sta scaricando i dati completi per {citta_scelta}...'):
         try:
             # 1. GEOCODING
             geo_url = "https://geocoding-api.open-meteo.com/v1/search"
@@ -34,7 +34,10 @@ if st.button("Lancia Analisi 🚀", type="primary"):
             LAT, LON, NAME = loc["latitude"], loc["longitude"], loc["name"]
             COUNTRY = loc.get("country", "")
             
-            st.success(f"📍 Posizione agganciata: **{NAME}** ({COUNTRY}) - Lat: {LAT:.2f}, Lon: {LON:.2f}")
+            # --- MAPPA DI CONFERMA ---
+            st.success(f"📍 Target: **{NAME}** ({COUNTRY})")
+            map_data = pd.DataFrame({'lat': [LAT], 'lon': [LON]})
+            st.map(map_data, zoom=10, use_container_width=True)
 
             # 2. SCARICO DATI
             models = [
@@ -44,21 +47,25 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 {"id": "jma_seamless", "label": "JMA (JP)", "c": "purple"}
             ]
 
+            # Contenitori Dati
             data_temp = {}
-            precip_accum = []
-            snow_accum = []
-            press_accum = []
+            # Liste per le medie (Ensemble Mean)
+            precip_accum, snow_accum, press_accum = [], [], []
+            wind_accum, gust_accum = [], []
+            app_temp_accum, freezing_accum = [], []
+            
             times_index = None
             base_url = "https://api.open-meteo.com/v1/forecast"
 
-            # Progress bar visuale
+            # Progress bar
             bar = st.progress(0)
             
             for i, m in enumerate(models):
                 bar.progress((i + 1) * 25)
+                # Richiedo TUTTI i parametri nuovi
                 params = {
                     "latitude": LAT, "longitude": LON,
-                    "hourly": "temperature_2m,precipitation,snowfall,pressure_msl",
+                    "hourly": "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height",
                     "models": m["id"],
                     "timezone": "auto",
                     "forecast_days": giorni
@@ -70,85 +77,135 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                         h = r["hourly"]
                         if times_index is None: times_index = pd.to_datetime(h["time"])
                         
+                        # Dati specifici per il grafico linee
                         data_temp[m["label"]] = h["temperature_2m"]
                         
-                        # Accumulo dati (sostituisco None con 0.0)
+                        # Accumulo per le medie (gestione nulli)
                         precip_accum.append([x if x else 0.0 for x in h.get("precipitation", [])])
                         snow_accum.append([x if x else 0.0 for x in h.get("snowfall", [])])
                         press_accum.append([x if x else np.nan for x in h.get("pressure_msl", [])])
+                        
+                        # Nuovi Dati
+                        wind_accum.append([x if x else 0.0 for x in h.get("wind_speed_10m", [])])
+                        gust_accum.append([x if x else 0.0 for x in h.get("wind_gusts_10m", [])])
+                        app_temp_accum.append([x if x else np.nan for x in h.get("apparent_temperature", [])])
+                        freezing_accum.append([x if x else np.nan for x in h.get("freezing_level_height", [])])
+
                 except: continue
             
-            bar.empty() # Rimuovo barra
+            bar.empty()
 
-            # 3. CALCOLI E VISUALIZZAZIONE
+            # 3. ELABORAZIONE
             if not data_temp:
                 st.error("Nessun dato dai modelli.")
             else:
-                # Allineamento array
+                # Allineamento array (taglio al minimo comune denominatore)
                 min_len = min([len(times_index)] + [len(x) for x in precip_accum])
                 times_index = times_index[:min_len]
                 
-                # Calcolo MEDIE ORARIE
-                avg_precip = np.mean([x[:min_len] for x in precip_accum], axis=0)
-                avg_snow = np.mean([x[:min_len] for x in snow_accum], axis=0)
-                avg_press = np.nanmean([x[:min_len] for x in press_accum], axis=0)
+                # Funzione helper per tagliare e fare la media
+                def get_avg(data_list):
+                    return np.nanmean([x[:min_len] for x in data_list], axis=0)
+
+                avg_precip = get_avg(precip_accum)
+                avg_snow = get_avg(snow_accum)
+                avg_press = get_avg(press_accum)
+                avg_wind = get_avg(wind_accum)
+                avg_gust = get_avg(gust_accum)
+                avg_app_temp = get_avg(app_temp_accum)
+                avg_freezing = get_avg(freezing_accum)
                 
-                # --- CALCOLO TOTALI (ACCUMULI) ---
-                # Sommo tutte le ore per avere il totale dell'evento
+                # Totali
                 tot_pioggia = np.sum(avg_precip)
                 tot_neve = np.sum(avg_snow)
+                max_wind = np.max(avg_gust)
                 
-                # --- DASHBOARD METRICHE ---
-                st.markdown("### 📊 Riepilogo Totale Evento")
-                kpi1, kpi2, kpi3 = st.columns(3)
-                
-                kpi1.metric("Totale Pioggia", f"{tot_pioggia:.1f} mm", delta_color="normal")
-                
-                # Logica colore Neve: se è > 5cm diventa verde (buono), se no normale
-                kpi2.metric("Totale Neve", f"{tot_neve:.1f} cm", 
-                            delta="Powder Alert!" if tot_neve > 10 else None)
-                
-                kpi3.metric("Pressione Minima", f"{np.nanmin(avg_press):.0f} hPa")
+                # --- DASHBOARD KPI ---
+                st.markdown("### 📊 Riepilogo Evento")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Tot. Pioggia", f"{tot_pioggia:.1f} mm")
+                k2.metric("Tot. Neve", f"{tot_neve:.1f} cm", delta="Powder!" if tot_neve > 10 else None)
+                k3.metric("Raffica Max", f"{max_wind:.0f} km/h", delta="Danger" if max_wind > 60 else None)
+                k4.metric("Press. Min", f"{np.nanmin(avg_press):.0f} hPa")
 
-                st.markdown("---")
+                st.divider()
 
-                # --- GRAFICI ---
-                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
+                # --- GRAFICI (STRUTTURATI A TABS PER ORDINE) ---
+                tab1, tab2, tab3 = st.tabs(["🌡️ Temp & Neve", "🌬️ Vento & Zero", "📉 Pressione"])
                 
-                # Grafico Temp
-                df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
-                for m in models:
-                    if m["label"] in df_temp.columns:
-                        ax1.plot(df_temp.index, df_temp[m["label"]], label=m["label"], color=m["c"], lw=2, alpha=0.8)
-                
-                ax1.axhline(0, color='black', lw=1)
-                ax1.set_ylabel("Temperatura (°C)")
-                ax1.grid(True, alpha=0.3)
-                ax1.legend(loc='upper left', fontsize=8)
-                ax1.set_title(f"Meteogramma: {NAME}", fontweight='bold')
+                # TAB 1: IL CLASSICO (Temp + Precipitazioni)
+                with tab1:
+                    fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
+                    
+                    # Temp Reale
+                    df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
+                    for m in models:
+                        if m["label"] in df_temp.columns:
+                            ax1.plot(df_temp.index, df_temp[m["label"]], label=m["label"], color=m["c"], lw=2, alpha=0.8)
+                    
+                    # Temp Percepita (Media)
+                    ax1.plot(times_index, avg_app_temp, color="gray", ls=":", lw=1.5, label="Temp. Percepita (Avg)")
+                    
+                    ax1.axhline(0, color='black', lw=1)
+                    ax1.set_ylabel("Temp (°C)")
+                    ax1.grid(True, alpha=0.3)
+                    ax1.legend(loc='upper left', fontsize=8)
+                    ax1.set_title("Temperatura Aria vs Percepita")
 
-                # Pressione
-                ax1b = ax1.twinx()
-                ax1b.plot(times_index, avg_press, color="gray", ls=":", lw=1.5, alpha=0.5)
-                ax1b.set_ylabel("hPa", color="gray")
+                    # Pioggia/Neve
+                    ax2.bar(times_index, avg_precip, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
+                    ax2b = ax2.twinx()
+                    snow_idx = avg_snow > 0.1
+                    if any(snow_idx):
+                        bars = ax2b.bar(times_index[snow_idx], avg_snow[snow_idx], width=0.04, 
+                                color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
+                        for rect in bars:
+                            h = rect.get_height()
+                            if h > 0.5:
+                                ax2b.text(rect.get_x() + rect.get_width()/2., 1.05*h,
+                                        f'{h:.1f}', ha='center', va='bottom', fontsize=8, color='darkblue')
 
-                # Grafico Precipitazioni
-                ax2.bar(times_index, avg_precip, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia (mm/h)")
-                ax2.set_ylabel("Pioggia oraria (mm)", color="dodgerblue")
-                
-                ax2b = ax2.twinx()
-                snow_idx = avg_snow > 0.1
-                if any(snow_idx):
-                    bars = ax2b.bar(times_index[snow_idx], avg_snow[snow_idx], width=0.04, 
-                            color="cyan", edgecolor="blue", hatch="///", label="Neve (cm/h)", alpha=0.9)
-                
-                ax2b.set_ylabel("NEVE oraria (cm)", color="darkblue")
-                
-                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %H:00'))
-                ax2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
-                plt.xticks(rotation=45)
-                
-                st.pyplot(fig)
+                    ax2.set_ylabel("Pioggia (mm)", color="dodgerblue")
+                    ax2b.set_ylabel("Neve (cm)", color="darkblue")
+                    
+                    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %Hh'))
+                    st.pyplot(fig1)
+
+                # TAB 2: VENTO E ZERO TERMICO
+                with tab2:
+                    st.subheader("Analisi Vento e Quota Neve")
+                    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+                    
+                    # Vento
+                    ax3.plot(times_index, avg_wind, color="blue", label="Vento Medio", lw=2)
+                    ax3.fill_between(times_index, avg_wind, avg_gust, color="red", alpha=0.2, label="Raffiche")
+                    ax3.plot(times_index, avg_gust, color="red", lw=1, ls="--")
+                    ax3.set_ylabel("Velocità (km/h)")
+                    ax3.legend()
+                    ax3.grid(True, alpha=0.3)
+                    ax3.set_title("Vento Medio e Raffiche")
+                    
+                    # Zero Termico
+                    ax4.plot(times_index, avg_freezing, color="green", lw=2, label="Quota 0°C")
+                    ax4.fill_between(times_index, avg_freezing, 0, color="green", alpha=0.05)
+                    ax4.set_ylabel("Metri (slm)")
+                    ax4.legend()
+                    ax4.grid(True, alpha=0.3)
+                    ax4.set_title("Quota dello Zero Termico")
+                    
+                    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %Hh'))
+                    st.pyplot(fig2)
+
+                # TAB 3: DETTAGLIO PRESSIONE
+                with tab3:
+                    fig3, ax5 = plt.subplots(figsize=(10, 5))
+                    ax5.plot(times_index, avg_press, color="black", lw=2, label="Pressione (hPa)")
+                    ax5.fill_between(times_index, avg_press, np.min(avg_press)-5, color="gray", alpha=0.1)
+                    ax5.set_ylabel("hPa")
+                    ax5.set_title("Andamento Barometrico")
+                    ax5.grid(True)
+                    ax5.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %Hh'))
+                    st.pyplot(fig3)
                 
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
