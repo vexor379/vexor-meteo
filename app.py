@@ -11,7 +11,7 @@ import folium
 st.set_page_config(page_title="Vexor Meteo Pro", page_icon="❄️", layout="centered")
 
 st.title("🌍 VEXOR METEO PRO")
-st.write("Analisi Avanzata: SWE, Neve e Pioggia")
+st.write("Analisi Avanzata: Cerca località o clicca sulla mappa.")
 
 # --- SESSION STATE ---
 if 'lat' not in st.session_state: st.session_state.lat = 44.25
@@ -19,31 +19,38 @@ if 'lon' not in st.session_state: st.session_state.lon = 7.78
 if 'location_name' not in st.session_state: st.session_state.location_name = "Prato Nevoso (Default)"
 if 'start_analysis' not in st.session_state: st.session_state.start_analysis = False
 
-# --- INPUT ---
-col_input, col_days = st.columns([3, 1])
-with col_input:
-    city_input = st.text_input("Scrivi Località e premi Invio:", key="city_input_box")
-with col_days:
-    giorni = st.selectbox("Durata:", [3, 7, 10], index=1)
+# --- INPUT FORM (IL RITORNO DEL PULSANTE) ---
+# Usiamo un form per raggruppare input e pulsante
+with st.form("analysis_form"):
+    col_input, col_days = st.columns([3, 1])
+    with col_input:
+        city_input = st.text_input("Scrivi Località:", placeholder="Es. Roma, Livigno...")
+    with col_days:
+        giorni = st.selectbox("Durata:", [3, 7, 10], index=1)
+    
+    # Il pulsante che invia il form
+    submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
 
-# --- GEOCODING ---
-if city_input:
+# --- GEOCODING LOGIC (Se premi il pulsante) ---
+if submitted and city_input:
     try:
-        geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-        geo_res = requests.get(geo_url, params={"name": city_input, "count": 1, "language": "it"}).json()
-        if "results" in geo_res:
-            loc = geo_res["results"][0]
-            st.session_state.lat = loc["latitude"]
-            st.session_state.lon = loc["longitude"]
-            st.session_state.location_name = f"{loc['name']} ({loc.get('country','')})"
-            st.session_state.start_analysis = True 
-            st.rerun()
-        else:
-            st.error("❌ Città non trovata.")
+        with st.spinner("🔍 Cerco la località..."):
+            geo_url = "https://geocoding-api.open-meteo.com/v1/search"
+            geo_res = requests.get(geo_url, params={"name": city_input, "count": 1, "language": "it"}).json()
+            if "results" in geo_res:
+                loc = geo_res["results"][0]
+                st.session_state.lat = loc["latitude"]
+                st.session_state.lon = loc["longitude"]
+                st.session_state.location_name = f"{loc['name']} ({loc.get('country','')})"
+                st.session_state.start_analysis = True 
+                st.rerun() # Ricarico per aggiornare la mappa e far partire l'analisi
+            else:
+                st.error("❌ Città non trovata.")
     except Exception as e: st.error(f"Errore geocoding: {e}")
 
-# --- MAPPA ---
-st.markdown("Oppure **clicca un punto sulla mappa**:")
+# --- MAPPA INTERATTIVA ---
+st.markdown("---")
+st.markdown("**Oppure clicca un punto sulla mappa:**")
 m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=9)
 folium.Marker(
     [st.session_state.lat, st.session_state.lon],
@@ -53,9 +60,11 @@ folium.Marker(
 
 output_mappa = st_folium(m, height=350, use_container_width=True)
 
+# --- LOGICA CLICK MAPPA ---
 if output_mappa['last_clicked']:
     clicked_lat = output_mappa['last_clicked']['lat']
     clicked_lon = output_mappa['last_clicked']['lng']
+    # Se il click è nuovo/diverso dall'attuale posizione
     if clicked_lat != st.session_state.lat or clicked_lon != st.session_state.lon:
         st.session_state.lat = clicked_lat
         st.session_state.lon = clicked_lon
@@ -63,12 +72,12 @@ if output_mappa['last_clicked']:
         st.session_state.start_analysis = True 
         st.rerun()
 
-# --- ANALISI ---
+# --- MOTORE DI ANALISI (Parte se start_analysis è True) ---
 if st.session_state.start_analysis:
     st.divider()
     st.header(f"Analisi: {st.session_state.location_name}")
     
-    with st.spinner(f'📡 Calcolo SWE e parametri...'):
+    with st.spinner(f'📡 Elaborazione dati SWE e modelli...'):
         try:
             LAT = st.session_state.lat
             LON = st.session_state.lon
@@ -128,30 +137,17 @@ if st.session_state.start_analysis:
                 
                 # --- CALCOLI AVANZATI SWE/PIOGGIA ---
                 snow_mask = avg_snow > 0.1
-                
-                # 1. SWE (Snow Water Equivalent): È la somma totale dell'acqua (precipitazione totale)
                 tot_swe = np.sum(avg_precip) 
-                
-                # 2. Pioggia Vera (Liquida): Solo dove NON nevica
                 tot_pioggia_vera = np.sum(avg_precip[~snow_mask]) 
-                
-                # 3. Totale Neve (cm)
                 tot_neve = np.sum(avg_snow)
-                
                 max_wind = np.max(avg_gust)
                 
                 # --- DASHBOARD A 5 COLONNE ---
                 st.markdown("### 📊 Riepilogo Evento")
                 k1, k2, k3, k4, k5 = st.columns(5)
-                
-                # Mostro SWE (ex Totale Pioggia)
                 k1.metric("SWE (Tot. H2O)", f"{tot_swe:.1f} mm", help="Totale acqua caduta (neve fusa + pioggia)")
-                
-                # Mostro Pioggia Vera (Rischio lavaggio neve)
-                # Se è zero, la metto grigia, se è alta rossa (pericolo per la neve)
                 delta_rain = "Inverse" if tot_pioggia_vera > 5 else None 
                 k2.metric("Solo Pioggia", f"{tot_pioggia_vera:.1f} mm", delta=delta_rain, delta_color="inverse", help="Solo pioggia liquida")
-                
                 k3.metric("Neve Fresca", f"{tot_neve:.1f} cm", delta="Powder!" if tot_neve > 10 else None)
                 k4.metric("Raffica Max", f"{max_wind:.0f} km/h", delta="Danger" if max_wind > 60 else None)
                 k5.metric("Press. Min", f"{np.nanmin(avg_press):.0f} hPa")
@@ -164,7 +160,6 @@ if st.session_state.start_analysis:
                 
                 with tab1:
                     fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
-                    
                     df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
                     for m in models:
                         if m["label"] in df_temp.columns:
@@ -177,32 +172,27 @@ if st.session_state.start_analysis:
                     ax1.xaxis.set_major_formatter(date_fmt)
                     ax1.tick_params(labelbottom=True)
 
-                    # Grafico: Nel grafico manteniamo la logica ESCLUSIVA (Pioggia Vera) per pulizia
+                    # Grafico Pioggia/Neve ESCLUSIVO
                     precip_to_plot = avg_precip.copy()
                     precip_to_plot[snow_mask] = 0 
 
                     ax2.bar(times_index, precip_to_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia Liquida")
-                    
                     ax2b = ax2.twinx()
                     if any(snow_mask):
                         bars = ax2b.bar(times_index[snow_mask], avg_snow[snow_mask], width=0.04, 
                                 color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
-                        
                         is_long_range = giorni > 3
                         rotation_val = 90 if is_long_range else 0
                         font_val = 6 if is_long_range else 7
                         threshold_val = 0.5 if is_long_range else 0.3 
-                        
                         max_h_snow = np.max(avg_snow[snow_mask])
                         ax2b.set_ylim(0, max_h_snow * (1.5 if is_long_range else 1.3))
-
                         for rect in bars:
                             h = rect.get_height()
                             if h > threshold_val: 
                                 ax2b.text(rect.get_x() + rect.get_width()/2., 1.05*h,
                                         f'{h:.1f}', ha='center', va='bottom', fontsize=font_val, 
                                         rotation=rotation_val, color='darkblue', fontweight='bold')
-
                     ax2.set_ylabel("Pioggia (mm)", color="dodgerblue")
                     ax2b.set_ylabel("Neve (cm)", color="darkblue")
                     ax2.xaxis.set_major_formatter(date_fmt)
@@ -218,7 +208,6 @@ if st.session_state.start_analysis:
                     ax3.grid(True, alpha=0.3)
                     ax3.xaxis.set_major_formatter(date_fmt)
                     ax3.tick_params(labelbottom=True)
-                    
                     ax4.plot(times_index, avg_freezing, color="green", lw=2, label="Quota 0°C")
                     ax4.fill_between(times_index, avg_freezing, 0, color="green", alpha=0.05)
                     ax4.set_ylabel("Metri (slm)")
@@ -238,4 +227,5 @@ if st.session_state.start_analysis:
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
     
+    # Reset del trigger dopo l'analisi
     st.session_state.start_analysis = False
