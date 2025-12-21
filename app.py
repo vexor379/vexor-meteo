@@ -4,42 +4,74 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
+from streamlit_folium import st_folium
+import folium
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Ultimate", page_icon="🏔️", layout="centered")
+st.set_page_config(page_title="Vexor Meteo Pro", page_icon="❄️", layout="centered")
 
-st.title("🌍 VEXOR METEO ULTIMATE")
-st.write("Stazione Meteo Tascabile Multi-Modello")
+st.title("🌍 VEXOR METEO PRO")
+st.write("Analisi Avanzata: SWE, Neve e Pioggia")
+
+# --- SESSION STATE ---
+if 'lat' not in st.session_state: st.session_state.lat = 44.25
+if 'lon' not in st.session_state: st.session_state.lon = 7.78
+if 'location_name' not in st.session_state: st.session_state.location_name = "Prato Nevoso (Default)"
+if 'start_analysis' not in st.session_state: st.session_state.start_analysis = False
 
 # --- INPUT ---
-col1, col2 = st.columns([3, 1])
-with col1:
-    citta_scelta = st.text_input("Località:", value="Prato Nevoso")
-with col2:
-    giorni = st.selectbox("Durata:", [3, 7, 10], index=1) # Default su 7gg come richiesto
+col_input, col_days = st.columns([3, 1])
+with col_input:
+    city_input = st.text_input("Scrivi Località e premi Invio:", key="city_input_box")
+with col_days:
+    giorni = st.selectbox("Durata:", [3, 7, 10], index=1)
 
-if st.button("Lancia Analisi 🚀", type="primary"):
-    
-    with st.spinner(f'📡 Tech sta scaricando i dati completi per {citta_scelta}...'):
-        try:
-            # 1. GEOCODING
-            geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-            geo_res = requests.get(geo_url, params={"name": citta_scelta, "count": 1, "language": "it"}).json()
-            
-            if "results" not in geo_res:
-                st.error("❌ Città non trovata.")
-                st.stop()
-                
+# --- GEOCODING ---
+if city_input:
+    try:
+        geo_url = "https://geocoding-api.open-meteo.com/v1/search"
+        geo_res = requests.get(geo_url, params={"name": city_input, "count": 1, "language": "it"}).json()
+        if "results" in geo_res:
             loc = geo_res["results"][0]
-            LAT, LON, NAME = loc["latitude"], loc["longitude"], loc["name"]
-            COUNTRY = loc.get("country", "")
-            
-            # Mappa
-            st.success(f"📍 Target: **{NAME}** ({COUNTRY})")
-            map_data = pd.DataFrame({'lat': [LAT], 'lon': [LON]})
-            st.map(map_data, zoom=10, use_container_width=True)
+            st.session_state.lat = loc["latitude"]
+            st.session_state.lon = loc["longitude"]
+            st.session_state.location_name = f"{loc['name']} ({loc.get('country','')})"
+            st.session_state.start_analysis = True 
+            st.rerun()
+        else:
+            st.error("❌ Città non trovata.")
+    except Exception as e: st.error(f"Errore geocoding: {e}")
 
-            # 2. SCARICO DATI
+# --- MAPPA ---
+st.markdown("Oppure **clicca un punto sulla mappa**:")
+m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=9)
+folium.Marker(
+    [st.session_state.lat, st.session_state.lon],
+    popup=st.session_state.location_name,
+    icon=folium.Icon(color="red", icon="info-sign"),
+).add_to(m)
+
+output_mappa = st_folium(m, height=350, use_container_width=True)
+
+if output_mappa['last_clicked']:
+    clicked_lat = output_mappa['last_clicked']['lat']
+    clicked_lon = output_mappa['last_clicked']['lng']
+    if clicked_lat != st.session_state.lat or clicked_lon != st.session_state.lon:
+        st.session_state.lat = clicked_lat
+        st.session_state.lon = clicked_lon
+        st.session_state.location_name = f"Punto Mappa ({clicked_lat:.2f}, {clicked_lon:.2f})"
+        st.session_state.start_analysis = True 
+        st.rerun()
+
+# --- ANALISI ---
+if st.session_state.start_analysis:
+    st.divider()
+    st.header(f"Analisi: {st.session_state.location_name}")
+    
+    with st.spinner(f'📡 Calcolo SWE e parametri...'):
+        try:
+            LAT = st.session_state.lat
+            LON = st.session_state.lon
             models = [
                 {"id": "ecmwf_ifs025", "label": "ECMWF (EU)", "c": "red"},
                 {"id": "gfs_seamless", "label": "GFS (USA)", "c": "blue"},
@@ -51,13 +83,10 @@ if st.button("Lancia Analisi 🚀", type="primary"):
             precip_accum, snow_accum, press_accum = [], [], []
             wind_accum, gust_accum = [], []
             app_temp_accum, freezing_accum = [], []
-            
             times_index = None
             base_url = "https://api.open-meteo.com/v1/forecast"
-            bar = st.progress(0)
             
             for i, m in enumerate(models):
-                bar.progress((i + 1) * 25)
                 params = {
                     "latitude": LAT, "longitude": LON,
                     "hourly": "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height",
@@ -65,15 +94,12 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     "timezone": "auto",
                     "forecast_days": giorni
                 }
-                
                 try:
                     r = requests.get(base_url, params=params).json()
                     if 'hourly' in r:
                         h = r["hourly"]
                         if times_index is None: times_index = pd.to_datetime(h["time"])
-                        
                         data_temp[m["label"]] = h["temperature_2m"]
-                        
                         precip_accum.append([x if x else 0.0 for x in h.get("precipitation", [])])
                         snow_accum.append([x if x else 0.0 for x in h.get("snowfall", [])])
                         press_accum.append([x if x else np.nan for x in h.get("pressure_msl", [])])
@@ -82,14 +108,10 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                         app_temp_accum.append([x if x else np.nan for x in h.get("apparent_temperature", [])])
                         freezing_accum.append([x if x else np.nan for x in h.get("freezing_level_height", [])])
                 except: continue
-            
-            bar.empty()
 
-            # 3. ELABORAZIONE
             if not data_temp:
                 st.error("Nessun dato dai modelli.")
             else:
-                # Allineamento
                 min_len = min([len(times_index)] + [len(x) for x in precip_accum])
                 times_index = times_index[:min_len]
                 
@@ -104,31 +126,45 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 avg_app_temp = get_avg(app_temp_accum)
                 avg_freezing = get_avg(freezing_accum)
                 
-                tot_pioggia = np.sum(avg_precip)
+                # --- CALCOLI AVANZATI SWE/PIOGGIA ---
+                snow_mask = avg_snow > 0.1
+                
+                # 1. SWE (Snow Water Equivalent): È la somma totale dell'acqua (precipitazione totale)
+                tot_swe = np.sum(avg_precip) 
+                
+                # 2. Pioggia Vera (Liquida): Solo dove NON nevica
+                tot_pioggia_vera = np.sum(avg_precip[~snow_mask]) 
+                
+                # 3. Totale Neve (cm)
                 tot_neve = np.sum(avg_snow)
+                
                 max_wind = np.max(avg_gust)
                 
-                # --- DASHBOARD ---
+                # --- DASHBOARD A 5 COLONNE ---
                 st.markdown("### 📊 Riepilogo Evento")
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Tot. Pioggia", f"{tot_pioggia:.1f} mm")
-                k2.metric("Tot. Neve", f"{tot_neve:.1f} cm", delta="Powder!" if tot_neve > 10 else None)
-                k3.metric("Raffica Max", f"{max_wind:.0f} km/h", delta="Danger" if max_wind > 60 else None)
-                k4.metric("Press. Min", f"{np.nanmin(avg_press):.0f} hPa")
+                k1, k2, k3, k4, k5 = st.columns(5)
+                
+                # Mostro SWE (ex Totale Pioggia)
+                k1.metric("SWE (Tot. H2O)", f"{tot_swe:.1f} mm", help="Totale acqua caduta (neve fusa + pioggia)")
+                
+                # Mostro Pioggia Vera (Rischio lavaggio neve)
+                # Se è zero, la metto grigia, se è alta rossa (pericolo per la neve)
+                delta_rain = "Inverse" if tot_pioggia_vera > 5 else None 
+                k2.metric("Solo Pioggia", f"{tot_pioggia_vera:.1f} mm", delta=delta_rain, delta_color="inverse", help="Solo pioggia liquida")
+                
+                k3.metric("Neve Fresca", f"{tot_neve:.1f} cm", delta="Powder!" if tot_neve > 10 else None)
+                k4.metric("Raffica Max", f"{max_wind:.0f} km/h", delta="Danger" if max_wind > 60 else None)
+                k5.metric("Press. Min", f"{np.nanmin(avg_press):.0f} hPa")
 
                 st.divider()
 
                 # --- GRAFICI ---
                 tab1, tab2, tab3 = st.tabs(["🌡️ Temp & Neve", "🌬️ Vento & Zero", "📉 Pressione"])
-                
                 date_fmt = mdates.DateFormatter('%d/%m %Hh')
                 
-                # TAB 1: TEMP + PRECIPITAZIONI
                 with tab1:
-                    # MODIFICA 1: Ingrandimento Orizzontale (figsize passa da 10 a 14)
                     fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
                     
-                    # Grafico SOPRA (Temp)
                     df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
                     for m in models:
                         if m["label"] in df_temp.columns:
@@ -138,24 +174,20 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                     ax1.set_ylabel("Temp (°C)")
                     ax1.grid(True, alpha=0.3)
                     ax1.legend(loc='upper left', fontsize=8)
-                    
                     ax1.xaxis.set_major_formatter(date_fmt)
                     ax1.tick_params(labelbottom=True)
 
-                    # Grafico SOTTO (Pioggia/Neve)
-                    # MODIFICA 2: LOGICA ESCLUSIVA (Se nevica, azzero la pioggia nel grafico)
-                    snow_mask = avg_snow > 0.1
+                    # Grafico: Nel grafico manteniamo la logica ESCLUSIVA (Pioggia Vera) per pulizia
                     precip_to_plot = avg_precip.copy()
-                    precip_to_plot[snow_mask] = 0 # Nascondo la barra blu se c'è quella ciano
+                    precip_to_plot[snow_mask] = 0 
 
-                    ax2.bar(times_index, precip_to_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
+                    ax2.bar(times_index, precip_to_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia Liquida")
                     
                     ax2b = ax2.twinx()
                     if any(snow_mask):
                         bars = ax2b.bar(times_index[snow_mask], avg_snow[snow_mask], width=0.04, 
                                 color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
                         
-                        # Fix sovrapposizione numeri
                         is_long_range = giorni > 3
                         rotation_val = 90 if is_long_range else 0
                         font_val = 6 if is_long_range else 7
@@ -173,37 +205,28 @@ if st.button("Lancia Analisi 🚀", type="primary"):
 
                     ax2.set_ylabel("Pioggia (mm)", color="dodgerblue")
                     ax2b.set_ylabel("Neve (cm)", color="darkblue")
-                    
                     ax2.xaxis.set_major_formatter(date_fmt)
                     st.pyplot(fig1)
 
-                # TAB 2: VENTO + ZERO TERMICO
                 with tab2:
-                    # Anche qui allargo per coerenza (14)
                     fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
-                    
-                    # Grafico SOPRA (Vento)
                     ax3.plot(times_index, avg_wind, color="blue", label="Media", lw=2)
                     ax3.fill_between(times_index, avg_wind, avg_gust, color="red", alpha=0.2, label="Raffiche")
                     ax3.plot(times_index, avg_gust, color="red", lw=1, ls="--")
                     ax3.set_ylabel("Km/h")
                     ax3.legend(loc='upper left', fontsize=8)
                     ax3.grid(True, alpha=0.3)
-                    
                     ax3.xaxis.set_major_formatter(date_fmt)
                     ax3.tick_params(labelbottom=True)
                     
-                    # Grafico SOTTO (Zero Termico)
                     ax4.plot(times_index, avg_freezing, color="green", lw=2, label="Quota 0°C")
                     ax4.fill_between(times_index, avg_freezing, 0, color="green", alpha=0.05)
                     ax4.set_ylabel("Metri (slm)")
                     ax4.legend(loc='upper left', fontsize=8)
                     ax4.grid(True, alpha=0.3)
-                    
                     ax4.xaxis.set_major_formatter(date_fmt)
                     st.pyplot(fig2)
 
-                # TAB 3: PRESSIONE
                 with tab3:
                     fig3, ax5 = plt.subplots(figsize=(14, 6))
                     ax5.plot(times_index, avg_press, color="black", lw=2)
@@ -214,3 +237,5 @@ if st.button("Lancia Analisi 🚀", type="primary"):
                 
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
+    
+    st.session_state.start_analysis = False
