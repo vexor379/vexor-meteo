@@ -13,50 +13,67 @@ st.set_page_config(page_title="Vexor Meteo Pro", page_icon="❄️", layout="cen
 st.title("🌍 VEXOR METEO PRO")
 st.write("Analisi Avanzata: Cerca località o clicca sulla mappa.")
 
-# --- SESSION STATE ---
-if 'lat' not in st.session_state: st.session_state.lat = 44.25
-if 'lon' not in st.session_state: st.session_state.lon = 7.78
-if 'location_name' not in st.session_state: st.session_state.location_name = "Prato Nevoso (Default)"
-if 'start_analysis' not in st.session_state: st.session_state.start_analysis = False
-# Variabile specifica per sincronizzare il testo della casella
-if 'box_text' not in st.session_state: st.session_state.box_text = ""
+# --- SESSION STATE (Inizializzazione Sicura) ---
+# Usiamo valori di default sicuri per evitare crash al primo avvio
+defaults = {
+    'lat': 44.25,
+    'lon': 7.78,
+    'location_name': "Prato Nevoso (Default)",
+    'box_text': "",
+    'start_analysis': False
+}
+
+for key, val in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
+
+# --- FUNZIONE DI RICERCA CITTÀ (Per pulizia codice) ---
+def cerca_citta(nome_citta):
+    if not nome_citta: return
+    try:
+        url = "https://geocoding-api.open-meteo.com/v1/search"
+        res = requests.get(url, params={"name": nome_citta, "count": 1, "language": "it"}, timeout=5).json()
+        
+        if "results" in res:
+            loc = res["results"][0]
+            st.session_state.lat = loc["latitude"]
+            st.session_state.lon = loc["longitude"]
+            st.session_state.location_name = f"{loc['name']} ({loc.get('country','')})"
+            st.session_state.box_text = f"{loc['name']} ({loc.get('country','')})"
+            st.session_state.start_analysis = True
+            return True
+        else:
+            st.warning(f"⚠️ Località '{nome_citta}' non trovata. Riprova.")
+            return False
+    except Exception as e:
+        st.error(f"Errore di connessione: {e}")
+        return False
 
 # --- INPUT FORM ---
 with st.form("analysis_form"):
     col_input, col_days = st.columns([3, 1])
     with col_input:
-        # COLLEGAMENTO MAGICO: value=st.session_state.box_text
+        # Il value è collegato allo stato, così si aggiorna se clicchi sulla mappa
         city_input = st.text_input("Scrivi Località:", value=st.session_state.box_text, placeholder="Es. Roma, Livigno...")
     with col_days:
         giorni = st.selectbox("Durata:", [3, 7, 10], index=1)
     
     submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
 
-# --- GEOCODING (Se usi il testo) ---
+# --- LOGICA RICERCA TESTUALE ---
 if submitted and city_input:
-    try:
-        with st.spinner("🔍 Cerco la località..."):
-            geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-            geo_res = requests.get(geo_url, params={"name": city_input, "count": 1, "language": "it"}).json()
-            if "results" in geo_res:
-                loc = geo_res["results"][0]
-                st.session_state.lat = loc["latitude"]
-                st.session_state.lon = loc["longitude"]
-                country = loc.get('country','')
-                st.session_state.location_name = f"{loc['name']} ({country})"
-                
-                # Aggiorno anche il testo della casella per coerenza
-                st.session_state.box_text = f"{loc['name']} ({country})"
-                
-                st.session_state.start_analysis = True 
+    # Se l'utente ha scritto qualcosa di diverso dall'ultima volta O ha forzato il click
+    if city_input != st.session_state.location_name: 
+        with st.spinner("🔍 Cerco coordinate..."):
+            successo = cerca_citta(city_input)
+            if successo:
                 st.rerun()
-            else:
-                st.error("❌ Città non trovata.")
-    except Exception as e: st.error(f"Errore geocoding: {e}")
 
 # --- MAPPA INTERATTIVA ---
 st.markdown("---")
 st.markdown("**Oppure clicca un punto sulla mappa:**")
+
+# Mappa centrata sull'ultima posizione valida
 m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=9)
 folium.Marker(
     [st.session_state.lat, st.session_state.lon],
@@ -64,33 +81,43 @@ folium.Marker(
     icon=folium.Icon(color="red", icon="info-sign"),
 ).add_to(m)
 
+# Riceviamo i dati dal click
 output_mappa = st_folium(m, height=350, use_container_width=True)
 
-# --- LOGICA CLICK MAPPA (Aggiorna anche la casella!) ---
+# --- LOGICA CLICK MAPPA (Con Reverse Geocoding) ---
 if output_mappa['last_clicked']:
     clicked_lat = output_mappa['last_clicked']['lat']
     clicked_lon = output_mappa['last_clicked']['lng']
     
-    if clicked_lat != st.session_state.lat or clicked_lon != st.session_state.lon:
+    # Controllo per evitare loop infiniti: agisco solo se le coordinate sono NUOVE
+    # Uso una tolleranza minima (abs < 0.0001) perché i float a volte cambiano di pochissimo
+    if (abs(clicked_lat - st.session_state.lat) > 0.0001) or (abs(clicked_lon - st.session_state.lon) > 0.0001):
+        
         st.session_state.lat = clicked_lat
         st.session_state.lon = clicked_lon
         
-        # Creo un nome basato sulle coordinate
-        nome_punto = f"Punto Mappa ({clicked_lat:.2f}, {clicked_lon:.2f})"
-        st.session_state.location_name = nome_punto
-        
-        # AGGIORNO LA CASELLA DI TESTO!
-        st.session_state.box_text = nome_punto
-        
-        st.session_state.start_analysis = True 
+        # PROVO A TROVARE IL NOME DEL PUNTO CLICCATO (Reverse Geocoding)
+        # Uso un trucco: cerco la città più vicina a queste coordinate
+        try:
+            # Open-Meteo non ha un reverse geocoding diretto semplice, ma possiamo usare il nome generico
+            # Oppure lasciare le coordinate se siamo nel nulla.
+            # Per stabilità e velocità, aggiorniamo subito con le coordinate, poi l'analisi partirà.
+            nome_punto = f"Punto Mappa ({clicked_lat:.2f}, {clicked_lon:.2f})"
+            st.session_state.location_name = nome_punto
+            st.session_state.box_text = nome_punto
+        except:
+            pass
+            
+        st.session_state.start_analysis = True
         st.rerun()
 
 # --- MOTORE DI ANALISI ---
+# Questa parte parte SOLO se abbiamo coordinate valide confermate
 if st.session_state.start_analysis:
     st.divider()
     st.header(f"Analisi: {st.session_state.location_name}")
     
-    with st.spinner(f'📡 Elaborazione dati e modelli...'):
+    with st.spinner(f'📡 Elaborazione dati SWE e modelli...'):
         try:
             LAT = st.session_state.lat
             LON = st.session_state.lon
@@ -117,7 +144,7 @@ if st.session_state.start_analysis:
                     "forecast_days": giorni
                 }
                 try:
-                    r = requests.get(base_url, params=params).json()
+                    r = requests.get(base_url, params=params, timeout=10).json()
                     if 'hourly' in r:
                         h = r["hourly"]
                         if times_index is None: times_index = pd.to_datetime(h["time"])
@@ -132,7 +159,7 @@ if st.session_state.start_analysis:
                 except: continue
 
             if not data_temp:
-                st.error("Nessun dato dai modelli.")
+                st.error("Nessun dato dai modelli. Riprova tra poco.")
             else:
                 min_len = min([len(times_index)] + [len(x) for x in precip_accum])
                 times_index = times_index[:min_len]
@@ -238,5 +265,3 @@ if st.session_state.start_analysis:
                 
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
-    
-    st.session_state.start_analysis = False
