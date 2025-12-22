@@ -137,7 +137,7 @@ if st.session_state.start_analysis:
     st.divider()
     
     # Spinner visibile
-    with st.spinner(f'📡 Elaborazione dati (Cache Ottimizzata)...'):
+    with st.spinner(f'📡 Elaborazione dati e modelli...'):
         
         # 1. RECUPERO DATI (Ora usa la cache!)
         LAT, LON = st.session_state.lat, st.session_state.lon
