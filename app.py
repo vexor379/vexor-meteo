@@ -117,7 +117,7 @@ if st.session_state.start_analysis:
     st.divider()
     st.header(f"Analisi: {st.session_state.location_name}")
     
-    with st.spinner(f'📡 Elaborazione dati SWE e modelli...'):
+    with st.spinner(f'📡 Elaborazione dati e modelli...'):
         try:
             LAT = st.session_state.lat
             LON = st.session_state.lon
