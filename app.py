@@ -8,13 +8,12 @@ from streamlit_folium import st_folium
 import folium
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Pro", page_icon="❄️", layout="centered")
+st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
+# Nota: layout="wide" usa tutto lo schermo!
 
-st.title("🌍 VEXOR METEO PRO")
-st.write("Analisi Avanzata: Cerca località o clicca sulla mappa.")
+st.title("🌍 VEXOR METEO SUITE")
 
-# --- SESSION STATE (Inizializzazione Sicura) ---
-# Usiamo valori di default sicuri per evitare crash al primo avvio
+# --- SESSION STATE ---
 defaults = {
     'lat': 44.25,
     'lon': 7.78,
@@ -22,18 +21,15 @@ defaults = {
     'box_text': "",
     'start_analysis': False
 }
-
 for key, val in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
+    if key not in st.session_state: st.session_state[key] = val
 
-# --- FUNZIONE DI RICERCA CITTÀ (Per pulizia codice) ---
-def cerca_citta(nome_citta):
-    if not nome_citta: return
+# --- FUNZIONE RICERCA ---
+def cerca_citta(nome):
+    if not nome: return False
     try:
-        url = "https://geocoding-api.open-meteo.com/v1/search"
-        res = requests.get(url, params={"name": nome_citta, "count": 1, "language": "it"}, timeout=5).json()
-        
+        res = requests.get("https://geocoding-api.open-meteo.com/v1/search", 
+                           params={"name": nome, "count": 1, "language": "it"}, timeout=5).json()
         if "results" in res:
             loc = res["results"][0]
             st.session_state.lat = loc["latitude"]
@@ -43,225 +39,212 @@ def cerca_citta(nome_citta):
             st.session_state.start_analysis = True
             return True
         else:
-            st.warning(f"⚠️ Località '{nome_citta}' non trovata. Riprova.")
+            st.sidebar.warning("❌ Località non trovata.")
             return False
-    except Exception as e:
-        st.error(f"Errore di connessione: {e}")
-        return False
+    except: return False
 
-# --- INPUT FORM ---
-with st.form("analysis_form"):
-    col_input, col_days = st.columns([3, 1])
-    with col_input:
-        # Il value è collegato allo stato, così si aggiorna se clicchi sulla mappa
-        city_input = st.text_input("Scrivi Località:", value=st.session_state.box_text, placeholder="Es. Roma, Livigno...")
-    with col_days:
-        giorni = st.selectbox("Durata:", [3, 7, 10], index=1)
+# --- SIDEBAR (PANNELLO DI CONTROLLO) ---
+with st.sidebar:
+    st.header("🎮 Controlli")
     
-    submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
+    with st.form("analysis_form"):
+        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text, placeholder="Es. Cortina, Etna...")
+        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
+        st.markdown("---")
+        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
+    
+    st.info("💡 **Tip:** Clicca sulla mappa per spostarti rapidamente.")
+    st.caption("Powered by Vexor & Tech")
 
-# --- LOGICA RICERCA TESTUALE ---
+# --- GESTIONE INPUT ---
 if submitted and city_input:
-    # Se l'utente ha scritto qualcosa di diverso dall'ultima volta O ha forzato il click
-    if city_input != st.session_state.location_name: 
-        with st.spinner("🔍 Cerco coordinate..."):
-            successo = cerca_citta(city_input)
-            if successo:
-                st.rerun()
+    if city_input != st.session_state.location_name:
+        if cerca_citta(city_input): st.rerun()
 
-# --- MAPPA INTERATTIVA ---
-st.markdown("---")
-st.markdown("**Oppure clicca un punto sulla mappa:**")
+# --- LAYOUT PRINCIPALE ---
+# Dividiamo: Mappa a sinistra (piccola), Titolo a destra (o sopra)
+# In layout wide, mettiamo la mappa in un expander o in cima.
 
-# Mappa centrata sull'ultima posizione valida
-m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=9)
-folium.Marker(
-    [st.session_state.lat, st.session_state.lon],
-    popup=st.session_state.location_name,
-    icon=folium.Icon(color="red", icon="info-sign"),
-).add_to(m)
+st.markdown(f"### 🎯 Target: **{st.session_state.location_name}**")
 
-# Riceviamo i dati dal click
-output_mappa = st_folium(m, height=350, use_container_width=True)
+# Mappa
+m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=10)
+folium.Marker([st.session_state.lat, st.session_state.lon], 
+              popup=st.session_state.location_name, icon=folium.Icon(color="red", icon="info-sign")).add_to(m)
 
-# --- LOGICA CLICK MAPPA (Con Reverse Geocoding) ---
+output_mappa = st_folium(m, height=300, use_container_width=True)
+
+# Click Mappa
 if output_mappa['last_clicked']:
-    clicked_lat = output_mappa['last_clicked']['lat']
-    clicked_lon = output_mappa['last_clicked']['lng']
-    
-    # Controllo per evitare loop infiniti: agisco solo se le coordinate sono NUOVE
-    # Uso una tolleranza minima (abs < 0.0001) perché i float a volte cambiano di pochissimo
-    if (abs(clicked_lat - st.session_state.lat) > 0.0001) or (abs(clicked_lon - st.session_state.lon) > 0.0001):
-        
-        st.session_state.lat = clicked_lat
-        st.session_state.lon = clicked_lon
-        
-        # PROVO A TROVARE IL NOME DEL PUNTO CLICCATO (Reverse Geocoding)
-        # Uso un trucco: cerco la città più vicina a queste coordinate
-        try:
-            # Open-Meteo non ha un reverse geocoding diretto semplice, ma possiamo usare il nome generico
-            # Oppure lasciare le coordinate se siamo nel nulla.
-            # Per stabilità e velocità, aggiorniamo subito con le coordinate, poi l'analisi partirà.
-            nome_punto = f"Punto Mappa ({clicked_lat:.2f}, {clicked_lon:.2f})"
-            st.session_state.location_name = nome_punto
-            st.session_state.box_text = nome_punto
-        except:
-            pass
-            
+    clat, clon = output_mappa['last_clicked']['lat'], output_mappa['last_clicked']['lng']
+    if (abs(clat - st.session_state.lat) > 0.0001) or (abs(clon - st.session_state.lon) > 0.0001):
+        st.session_state.lat = clat
+        st.session_state.lon = clon
+        nome_punto = f"Punto Mappa ({clat:.2f}, {clon:.2f})"
+        st.session_state.location_name = nome_punto
+        st.session_state.box_text = nome_punto
         st.session_state.start_analysis = True
         st.rerun()
 
-# --- MOTORE DI ANALISI ---
-# Questa parte parte SOLO se abbiamo coordinate valide confermate
+# --- MOTORE ANALISI ---
 if st.session_state.start_analysis:
     st.divider()
-    st.header(f"Analisi: {st.session_state.location_name}")
     
-    with st.spinner(f'📡 Elaborazione dati e modelli...'):
+    with st.spinner(f'📡 Elaborazione dati meteo avanzati...'):
         try:
-            LAT = st.session_state.lat
-            LON = st.session_state.lon
+            LAT, LON = st.session_state.lat, st.session_state.lon
             models = [
-                {"id": "ecmwf_ifs025", "label": "ECMWF (EU)", "c": "red"},
-                {"id": "gfs_seamless", "label": "GFS (USA)", "c": "blue"},
-                {"id": "icon_seamless", "label": "ICON (DE)", "c": "green"},
-                {"id": "jma_seamless", "label": "JMA (JP)", "c": "purple"}
+                {"id": "ecmwf_ifs025", "label": "ECMWF", "c": "red"},
+                {"id": "gfs_seamless", "label": "GFS", "c": "blue"},
+                {"id": "icon_seamless", "label": "ICON", "c": "green"},
+                {"id": "jma_seamless", "label": "JMA", "c": "purple"}
             ]
-
-            data_temp = {}
-            precip_accum, snow_accum, press_accum = [], [], []
-            wind_accum, gust_accum = [], []
-            app_temp_accum, freezing_accum = [], []
-            times_index = None
-            base_url = "https://api.open-meteo.com/v1/forecast"
             
-            for i, m in enumerate(models):
-                params = {
-                    "latitude": LAT, "longitude": LON,
-                    "hourly": "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height",
-                    "models": m["id"],
-                    "timezone": "auto",
-                    "forecast_days": giorni
-                }
+            # Parametri aumentati: aggiunto cloud_cover
+            params_base = "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height,cloud_cover"
+            
+            data_temp = {}
+            # Accumulatori
+            acc = {k: [] for k in ["precip", "snow", "press", "wind", "gust", "app_temp", "freezing", "cloud"]}
+            times_index = None
+            
+            for m in models:
+                p = {"latitude": LAT, "longitude": LON, "hourly": params_base, "models": m["id"], 
+                     "timezone": "auto", "forecast_days": giorni}
                 try:
-                    r = requests.get(base_url, params=params, timeout=10).json()
+                    r = requests.get("https://api.open-meteo.com/v1/forecast", params=p, timeout=8).json()
                     if 'hourly' in r:
                         h = r["hourly"]
                         if times_index is None: times_index = pd.to_datetime(h["time"])
                         data_temp[m["label"]] = h["temperature_2m"]
-                        precip_accum.append([x if x else 0.0 for x in h.get("precipitation", [])])
-                        snow_accum.append([x if x else 0.0 for x in h.get("snowfall", [])])
-                        press_accum.append([x if x else np.nan for x in h.get("pressure_msl", [])])
-                        wind_accum.append([x if x else 0.0 for x in h.get("wind_speed_10m", [])])
-                        gust_accum.append([x if x else 0.0 for x in h.get("wind_gusts_10m", [])])
-                        app_temp_accum.append([x if x else np.nan for x in h.get("apparent_temperature", [])])
-                        freezing_accum.append([x if x else np.nan for x in h.get("freezing_level_height", [])])
+                        
+                        acc["precip"].append([x if x else 0.0 for x in h.get("precipitation", [])])
+                        acc["snow"].append([x if x else 0.0 for x in h.get("snowfall", [])])
+                        acc["press"].append([x if x else np.nan for x in h.get("pressure_msl", [])])
+                        acc["wind"].append([x if x else 0.0 for x in h.get("wind_speed_10m", [])])
+                        acc["gust"].append([x if x else 0.0 for x in h.get("wind_gusts_10m", [])])
+                        acc["app_temp"].append([x if x else np.nan for x in h.get("apparent_temperature", [])])
+                        acc["freezing"].append([x if x else np.nan for x in h.get("freezing_level_height", [])])
+                        acc["cloud"].append([x if x else 0.0 for x in h.get("cloud_cover", [])]) # Nuovo
                 except: continue
 
             if not data_temp:
-                st.error("Nessun dato dai modelli. Riprova tra poco.")
+                st.error("Nessun dato recuperato.")
             else:
-                min_len = min([len(times_index)] + [len(x) for x in precip_accum])
+                # Allineamento e Medie
+                min_len = min([len(times_index)] + [len(x) for x in acc["precip"]])
                 times_index = times_index[:min_len]
                 
-                def get_avg(data_list):
-                    return np.nanmean([x[:min_len] for x in data_list], axis=0)
-
-                avg_precip = get_avg(precip_accum)
-                avg_snow = get_avg(snow_accum)
-                avg_press = get_avg(press_accum)
-                avg_wind = get_avg(wind_accum)
-                avg_gust = get_avg(gust_accum)
-                avg_app_temp = get_avg(app_temp_accum)
-                avg_freezing = get_avg(freezing_accum)
+                avg = {}
+                for k, v_list in acc.items():
+                    avg[k] = np.nanmean([x[:min_len] for x in v_list], axis=0)
                 
-                # --- CALCOLI SWE ---
-                snow_mask = avg_snow > 0.1
-                tot_swe = np.sum(avg_precip) 
-                tot_pioggia_vera = np.sum(avg_precip[~snow_mask]) 
-                tot_neve = np.sum(avg_snow)
-                max_wind = np.max(avg_gust)
+                # Calcoli Totali
+                snow_mask = avg["snow"] > 0.1
+                tot_swe = np.sum(avg["precip"])
+                tot_rain = np.sum(avg["precip"][~snow_mask])
+                tot_snow = np.sum(avg["snow"])
+                max_gust = np.max(avg["gust"])
                 
-                # --- DASHBOARD ---
-                st.markdown("### 📊 Riepilogo Evento")
-                k1, k2, k3, k4, k5 = st.columns(5)
-                k1.metric("SWE (Tot. H2O)", f"{tot_swe:.1f} mm", help="Totale acqua caduta (neve fusa + pioggia)")
-                delta_rain = "Inverse" if tot_pioggia_vera > 5 else None 
-                k2.metric("Solo Pioggia", f"{tot_pioggia_vera:.1f} mm", delta=delta_rain, delta_color="inverse", help="Solo pioggia liquida")
-                k3.metric("Neve Fresca", f"{tot_neve:.1f} cm", delta="Powder!" if tot_neve > 10 else None)
-                k4.metric("Raffica Max", f"{max_wind:.0f} km/h", delta="Danger" if max_wind > 60 else None)
-                k5.metric("Press. Min", f"{np.nanmin(avg_press):.0f} hPa")
+                # --- DASHBOARD METRICHE ---
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("SWE (Tot. Acqua)", f"{tot_swe:.1f} mm", help="Tutto ciò che cade dal cielo")
+                c2.metric("Solo Pioggia", f"{tot_rain:.1f} mm", delta="Inverse" if tot_rain>5 else None, delta_color="inverse")
+                c3.metric("Neve Fresca", f"{tot_snow:.1f} cm", delta="Powder!" if tot_snow>10 else None)
+                c4.metric("Raffica Max", f"{max_gust:.0f} km/h", delta="Danger" if max_gust>60 else None)
+                c5.metric("Press. Min", f"{np.nanmin(avg['press']):.0f} hPa")
+                
+                st.markdown("---")
 
-                st.divider()
-
-                # --- GRAFICI ---
-                tab1, tab2, tab3 = st.tabs(["🌡️ Temp & Neve", "🌬️ Vento & Zero", "📉 Pressione"])
+                # --- GRAFICI (Tabs) ---
+                t1, t2, t3, t4 = st.tabs(["🌡️ Temp & Neve", "☁️ Cielo & Sole", "🌬️ Vento & Zero", "📉 Pressione"])
                 date_fmt = mdates.DateFormatter('%d/%m %Hh')
-                
-                with tab1:
-                    fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
+
+                # T1: Temp + Neve
+                with t1:
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'height_ratios': [1.5, 1]})
                     df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
-                    for m in models:
-                        if m["label"] in df_temp.columns:
-                            ax1.plot(df_temp.index, df_temp[m["label"]], label=m["label"], color=m["c"], lw=2, alpha=0.8)
-                    ax1.plot(times_index, avg_app_temp, color="gray", ls=":", lw=1.5, label="Percepita")
-                    ax1.axhline(0, color='black', lw=1)
-                    ax1.set_ylabel("Temp (°C)")
-                    ax1.grid(True, alpha=0.3)
-                    ax1.legend(loc='upper left', fontsize=8)
-                    ax1.xaxis.set_major_formatter(date_fmt)
-                    ax1.tick_params(labelbottom=True)
-
-                    precip_to_plot = avg_precip.copy()
-                    precip_to_plot[snow_mask] = 0 
-
-                    ax2.bar(times_index, precip_to_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia Liquida")
+                    for col in df_temp.columns:
+                        ax1.plot(df_temp.index, df_temp[col], label=col, lw=2, alpha=0.8)
+                    ax1.plot(times_index, avg["app_temp"], color="gray", ls=":", label="Percepita")
+                    ax1.axhline(0, c="black", lw=1)
+                    ax1.grid(True, alpha=0.3); ax1.legend(loc="upper left", fontsize=8); ax1.set_ylabel("°C")
+                    
+                    # Grafico Pioggia/Neve Esclusivo
+                    rain_plot = avg["precip"].copy(); rain_plot[snow_mask] = 0
+                    ax2.bar(times_index, rain_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
                     ax2b = ax2.twinx()
                     if any(snow_mask):
-                        bars = ax2b.bar(times_index[snow_mask], avg_snow[snow_mask], width=0.04, 
-                                color="cyan", edgecolor="blue", hatch="///", label="Neve", alpha=0.9)
-                        is_long_range = giorni > 3
-                        rotation_val = 90 if is_long_range else 0
-                        font_val = 6 if is_long_range else 7
-                        threshold_val = 0.5 if is_long_range else 0.3 
-                        max_h_snow = np.max(avg_snow[snow_mask])
-                        ax2b.set_ylim(0, max_h_snow * (1.5 if is_long_range else 1.3))
-                        for rect in bars:
-                            h = rect.get_height()
-                            if h > threshold_val: 
-                                ax2b.text(rect.get_x() + rect.get_width()/2., 1.05*h,
-                                        f'{h:.1f}', ha='center', va='bottom', fontsize=font_val, 
-                                        rotation=rotation_val, color='darkblue', fontweight='bold')
-                    ax2.set_ylabel("Pioggia (mm)", color="dodgerblue")
-                    ax2b.set_ylabel("Neve (cm)", color="darkblue")
+                        bars = ax2b.bar(times_index[snow_mask], avg["snow"][snow_mask], width=0.04, color="cyan", hatch="///", edgecolor="blue")
+                        # Etichette Smart
+                        thresh = 0.5 if giorni>3 else 0.2
+                        for r in bars:
+                            h = r.get_height()
+                            if h > thresh:
+                                ax2b.text(r.get_x()+r.get_width()/2, h*1.05, f"{h:.1f}", ha="center", fontsize=7, color="darkblue", rotation=90 if giorni>3 else 0)
+                    
+                    ax2.set_ylabel("mm Pioggia", color="dodgerblue")
+                    ax2b.set_ylabel("cm Neve", color="darkblue")
                     ax2.xaxis.set_major_formatter(date_fmt)
-                    st.pyplot(fig1)
+                    st.pyplot(fig)
 
-                with tab2:
-                    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
-                    ax3.plot(times_index, avg_wind, color="blue", label="Media", lw=2)
-                    ax3.fill_between(times_index, avg_wind, avg_gust, color="red", alpha=0.2, label="Raffiche")
-                    ax3.plot(times_index, avg_gust, color="red", lw=1, ls="--")
-                    ax3.set_ylabel("Km/h")
-                    ax3.legend(loc='upper left', fontsize=8)
-                    ax3.grid(True, alpha=0.3)
-                    ax3.xaxis.set_major_formatter(date_fmt)
-                    ax3.tick_params(labelbottom=True)
-                    ax4.plot(times_index, avg_freezing, color="green", lw=2, label="Quota 0°C")
-                    ax4.fill_between(times_index, avg_freezing, 0, color="green", alpha=0.05)
-                    ax4.set_ylabel("Metri (slm)")
-                    ax4.legend(loc='upper left', fontsize=8)
-                    ax4.grid(True, alpha=0.3)
-                    ax4.xaxis.set_major_formatter(date_fmt)
-                    st.pyplot(fig2)
+                # T2: Copertura Nuvolosa (NUOVO)
+                with t2:
+                    fig_c, ax_c = plt.subplots(figsize=(14, 6))
+                    # Area grigia per le nuvole
+                    ax_c.fill_between(times_index, avg["cloud"], 0, color="gray", alpha=0.4, label="Nubi (%)")
+                    ax_c.plot(times_index, avg["cloud"], color="black", lw=1)
+                    
+                    # Linea del sole (inversa delle nuvole) per estetica
+                    ax_c.set_ylim(0, 100)
+                    ax_c.set_ylabel("Copertura (%)")
+                    ax_c.grid(True, alpha=0.3)
+                    ax_c.set_title("Copertura Nuvolosa (100% = Coperto, 0% = Sole)")
+                    ax_c.xaxis.set_major_formatter(date_fmt)
+                    
+                    # Aggiungo fascia "Soleggiato" in basso
+                    ax_c.axhspan(0, 20, color="yellow", alpha=0.1, label="Zona Soleggiata")
+                    ax_c.legend(loc="upper right")
+                    st.pyplot(fig_c)
 
-                with tab3:
-                    fig3, ax5 = plt.subplots(figsize=(14, 6))
-                    ax5.plot(times_index, avg_press, color="black", lw=2)
-                    ax5.set_ylabel("hPa")
-                    ax5.grid(True)
-                    ax5.xaxis.set_major_formatter(date_fmt)
-                    st.pyplot(fig3)
-                
+                # T3: Vento e Zero
+                with t3:
+                    fig_w, (ax_w, ax_z) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+                    ax_w.plot(times_index, avg["wind"], color="blue", label="Vento")
+                    ax_w.fill_between(times_index, avg["wind"], avg["gust"], color="red", alpha=0.2, label="Raffiche")
+                    ax_w.grid(True, alpha=0.3); ax_w.legend(); ax_w.set_ylabel("km/h")
+                    
+                    ax_z.plot(times_index, avg["freezing"], color="green", lw=2, label="Quota 0°C")
+                    ax_z.fill_between(times_index, avg["freezing"], 0, color="green", alpha=0.05)
+                    ax_z.grid(True, alpha=0.3); ax_z.legend(); ax_z.set_ylabel("Metri")
+                    ax_z.xaxis.set_major_formatter(date_fmt)
+                    st.pyplot(fig_w)
+
+                # T4: Pressione
+                with t4:
+                    fig_p, ax_p = plt.subplots(figsize=(14, 6))
+                    ax_p.plot(times_index, avg["press"], color="black", lw=2)
+                    ax_p.set_ylabel("hPa"); ax_p.grid(True)
+                    ax_p.xaxis.set_major_formatter(date_fmt)
+                    st.pyplot(fig_p)
+
+                # --- EXPORT DATI ---
+                st.divider()
+                st.subheader("📥 Download Dati")
+                df_export = pd.DataFrame({
+                    "Data": times_index,
+                    "Temp_Media": np.nanmean(list(data_temp.values()), axis=0)[:min_len],
+                    "Pioggia_mm": avg["precip"],
+                    "Neve_cm": avg["snow"],
+                    "Vento_kmh": avg["wind"],
+                    "Raffiche_kmh": avg["gust"],
+                    "Zero_Termico_m": avg["freezing"],
+                    "Nuvolosita_perc": avg["cloud"]
+                })
+                csv = df_export.to_csv(index=False).encode('utf-8')
+                st.download_button("Scarica CSV per Excel", data=csv, file_name=f"meteo_{st.session_state.location_name}.csv", mime="text/csv")
+
         except Exception as e:
-            st.error(f"Errore tecnico: {e}")
+            st.error(f"Errore imprevisto: {e}")
+
+    st.session_state.start_analysis = False
