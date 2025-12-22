@@ -18,7 +18,7 @@ defaults = {
     'lon': 7.78,
     'location_name': "Prato Nevoso (Default)",
     'box_text': "",
-    'start_analysis': False
+    'start_analysis': True
 }
 for key, val in defaults.items():
     if key not in st.session_state: st.session_state[key] = val
