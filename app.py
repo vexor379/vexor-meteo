@@ -10,7 +10,7 @@ import folium
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
 
-st.title("🌍 VEXOR METEO SUITE v6")
+st.title(" VEXOR METEO SUITE v6.1 (High-Res Snow)")
 
 # --- SESSION STATE ---
 defaults = {
@@ -26,6 +26,7 @@ for key, val in defaults.items():
 # --- FUNZIONE CACHED ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_meteo_data(lat, lon, days):
+    # 1. DATI GENERALI (Uso i modelli globali per le tendenze a lungo termine)
     models = [
         {"id": "ecmwf_ifs025", "label": "ECMWF", "c": "red"},
         {"id": "gfs_seamless", "label": "GFS", "c": "blue"},
@@ -33,14 +34,14 @@ def get_meteo_data(lat, lon, days):
         {"id": "jma_seamless", "label": "JMA", "c": "purple"}
     ]
     
-    # AGGIUNTO: snow_depth (spessore neve al suolo)
-    params_base = "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height,cloud_cover,snow_depth"
+    # Rimuovo snow_depth da qui, lo prendiamo dal modello High-Res dopo
+    params_base = "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height,cloud_cover"
     
     data_temp = {}
-    # Aggiungo 'depth' agli accumulatori
-    acc = {k: [] for k in ["precip", "snow", "press", "wind", "gust", "app_temp", "freezing", "cloud", "depth"]}
+    acc = {k: [] for k in ["precip", "snow", "press", "wind", "gust", "app_temp", "freezing", "cloud"]}
     times_index = None
     
+    # Loop modelli globali
     for m in models:
         p = {"latitude": lat, "longitude": lon, "hourly": params_base, "models": m["id"], 
                 "timezone": "auto", "forecast_days": days}
@@ -49,12 +50,12 @@ def get_meteo_data(lat, lon, days):
             if 'hourly' in r:
                 h = r["hourly"]
                 current_time_index = pd.to_datetime(h["time"])
-                
                 if times_index is None: times_index = current_time_index
-                min_len_local = min(len(times_index), len(h["temperature_2m"]))
                 
+                min_len_local = min(len(times_index), len(h["temperature_2m"]))
                 data_temp[m["label"]] = h["temperature_2m"][:min_len_local]
                 
+                # Popolo gli accumulatori
                 acc["precip"].append([x if x else 0.0 for x in h.get("precipitation", [])][:min_len_local])
                 acc["snow"].append([x if x else 0.0 for x in h.get("snowfall", [])][:min_len_local])
                 acc["press"].append([x if x else np.nan for x in h.get("pressure_msl", [])][:min_len_local])
@@ -63,11 +64,26 @@ def get_meteo_data(lat, lon, days):
                 acc["app_temp"].append([x if x else np.nan for x in h.get("apparent_temperature", [])][:min_len_local])
                 acc["freezing"].append([x if x else np.nan for x in h.get("freezing_level_height", [])][:min_len_local])
                 acc["cloud"].append([x if x else 0.0 for x in h.get("cloud_cover", [])][:min_len_local])
-                # snow_depth arriva in METRI, lo teniamo così e convertiamo dopo
-                acc["depth"].append([x if x else 0.0 for x in h.get("snow_depth", [])][:min_len_local])
         except: continue
+    
+    # 2. DATO ALTEZZA NEVE (High-Resolution Call)
+    # Facciamo una chiamata separata usando 'best_match' che pesca dal modello più risoluto (es. AROME 1.3km o ICON-D2 2km)
+    high_res_depth = []
+    try:
+        p_depth = {
+            "latitude": lat, "longitude": lon, 
+            "hourly": "snow_depth", 
+            "models": "best_match",  # <-- LA MAGIA: Open-Meteo sceglie il modello migliore (es. AROME/ICON-D2)
+            "timezone": "auto", 
+            "forecast_days": days
+        }
+        r_depth = requests.get("https://api.open-meteo.com/v1/forecast", params=p_depth, timeout=5).json()
+        if 'hourly' in r_depth and 'snow_depth' in r_depth['hourly']:
+             high_res_depth = [x if x else 0.0 for x in r_depth['hourly']['snow_depth']]
+    except: 
+        pass # Se fallisce, resterà vuoto
         
-    return data_temp, acc, times_index
+    return data_temp, acc, times_index, high_res_depth
 
 # --- FUNZIONE RICERCA ---
 def cerca_citta(nome):
@@ -84,19 +100,19 @@ def cerca_citta(nome):
             st.session_state.start_analysis = True
             return True
         else:
-            st.sidebar.warning("❌ Località non trovata.")
+            st.sidebar.warning(" Località non trovata.")
             return False
     except: return False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("🎮 Controlli")
+    st.header(" Controlli")
     with st.form("analysis_form"):
-        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
-        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
+        city_input = st.text_input(" Cerca Località:", value=st.session_state.box_text)
+        giorni = st.selectbox(" Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
-        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
-    st.caption("Vexor Meteo Suite v6.0")
+        submitted = st.form_submit_button("Lancia Analisi", type="primary", use_container_width=True)
+    st.caption("Vexor Meteo Suite v6.1")
 
 if submitted and city_input:
     if city_input != st.session_state.location_name:
@@ -124,9 +140,10 @@ if output_mappa['last_clicked']:
 # --- MOTORE ANALISI ---
 if st.session_state.start_analysis:
     st.divider()
-    with st.spinner(f'📡 Calcolo SWE in kg/m² e altezza neve...'):
+    with st.spinner(f'📡 Analisi High-Res in corso...'):
         LAT, LON = st.session_state.lat, st.session_state.lon
-        data_temp, acc, times_index = get_meteo_data(LAT, LON, giorni)
+        # Chiamata aggiornata che restituisce anche high_res_depth
+        data_temp, acc, times_index, high_res_depth = get_meteo_data(LAT, LON, giorni)
         
         if not data_temp or times_index is None:
             st.error("Dati mancanti. Riprova.")
@@ -143,31 +160,31 @@ if st.session_state.start_analysis:
                 # --- CALCOLI SCIENTIFICI ---
                 snow_mask = avg["snow"] > 0.1
                 
-                # 1. SWE: mm e kg/m2 sono 1:1 per l'acqua
                 tot_swe = np.sum(avg["precip"])
                 tot_rain = np.sum(avg["precip"][~snow_mask])
-                
-                # 2. Neve Fresca (nuova caduta)
                 tot_snow_fresh = np.sum(avg["snow"])
-                
-                # 3. Neve AL SUOLO (Depth) - Convertiamo da Metri a Centimetri
-                # Prendiamo il valore attuale (indice 0) e il massimo previsto
-                current_depth_cm = avg["depth"][0] * 100 if len(avg["depth"]) > 0 else 0
-                max_depth_cm = np.max(avg["depth"]) * 100 if len(avg["depth"]) > 0 else 0
-                
                 max_gust = np.max(avg["gust"])
+
+                # --- GESTIONE NEVE AL SUOLO (HIGH RES) ---
+                # Usiamo il dato high_res se disponibile, altrimenti 0
+                if len(high_res_depth) > 0:
+                    depth_series = np.array(high_res_depth[:min_len]) * 100 # Metri -> cm
+                    current_depth_cm = depth_series[0]
+                    max_depth_cm = np.max(depth_series)
+                else:
+                    current_depth_cm = 0
+                    max_depth_cm = 0
                 
-                # --- DASHBOARD (6 Colonne ora!) ---
-                # Uso colonne strette per farci stare tutto
+                # --- DASHBOARD ---
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
                 
-                c1.metric("SWE", f"{tot_swe:.1f} kg/m²", help="Equivalente liquido (1 mm = 1 kg/m²)")
+                c1.metric("SWE", f"{tot_swe:.1f} kg/m²", help="Equivalente liquido totale")
                 c2.metric("Solo Pioggia", f"{tot_rain:.1f} mm", delta="Inverse" if tot_rain>5 else None, delta_color="inverse")
                 c3.metric("Neve Fresca", f"{tot_snow_fresh:.1f} cm", delta="Accumulo" if tot_snow_fresh>5 else None)
                 
-                # NUOVE METRICHE NEVE SUOLO
-                c4.metric("Neve Suolo (ORA)", f"{current_depth_cm:.0f} cm", help="Stima neve presente ora al suolo")
-                c5.metric("Neve Suolo (MAX)", f"{max_depth_cm:.0f} cm", help="Massimo accumulo previsto (Vecchio + Nuovo)", delta=f"+{max_depth_cm-current_depth_cm:.0f} cm")
+                # Etichetta speciale per far capire che stiamo usando il modello Top
+                c4.metric("Neve Suolo (HR)", f"{current_depth_cm:.0f} cm", help="Dato da modello Alta Risoluzione (Best Match)")
+                c5.metric("Neve Max (HR)", f"{max_depth_cm:.0f} cm", delta=f"+{max_depth_cm-current_depth_cm:.0f} cm")
                 
                 c6.metric("Raffica Max", f"{max_gust:.0f} km/h", delta="Danger" if max_gust>60 else None)
                 
@@ -177,15 +194,13 @@ if st.session_state.start_analysis:
                 t1, t2, t3, t4 = st.tabs(["🌡️ Temp & Neve", "☁️ Cielo & Sole", "🌬️ Vento & Zero", "📉 Pressione"])
                 date_fmt = mdates.DateFormatter('%d/%m %Hh')
                 
-                # Funzione helper per mettere le date su tutti i grafici
                 def format_xaxis(ax):
                     ax.xaxis.set_major_formatter(date_fmt)
-                    ax.tick_params(labelbottom=True) # FORZA l'etichetta anche se il grafico è sopra
+                    ax.tick_params(labelbottom=True)
                     ax.grid(True, alpha=0.3)
 
                 # T1
                 with t1:
-                    # Aumento hspace per far leggere bene le date del grafico sopra
                     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'height_ratios': [1.5, 1], 'hspace': 0.3})
                     
                     df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
@@ -193,8 +208,8 @@ if st.session_state.start_analysis:
                         ax1.plot(df_temp.index, df_temp[col], label=col, lw=2, alpha=0.8)
                     ax1.plot(times_index, avg["app_temp"], color="gray", ls=":", label="Percepita")
                     ax1.axhline(0, c="black", lw=1)
-                    ax1.legend(loc="upper left", fontsize=8); ax1.set_ylabel("°C"); ax1.set_title("Temperatura")
-                    format_xaxis(ax1) # Date visibili!
+                    ax1.legend(loc="upper left", fontsize=8); ax1.set_ylabel("°C"); ax1.set_title("Temperatura Multi-Model")
+                    format_xaxis(ax1)
                     
                     rain_plot = avg["precip"].copy(); rain_plot[snow_mask] = 0
                     ax2.bar(times_index, rain_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
@@ -227,7 +242,7 @@ if st.session_state.start_analysis:
                     ax_w.plot(times_index, avg["wind"], color="blue", label="Vento")
                     ax_w.fill_between(times_index, avg["wind"], avg["gust"], color="red", alpha=0.2, label="Raffiche")
                     ax_w.legend(); ax_w.set_ylabel("km/h"); ax_w.set_title("Vento")
-                    format_xaxis(ax_w) # Date visibili!
+                    format_xaxis(ax_w)
                     
                     ax_z.plot(times_index, avg["freezing"], color="green", lw=2, label="Quota 0°C")
                     ax_z.fill_between(times_index, avg["freezing"], 0, color="green", alpha=0.05)
@@ -250,7 +265,7 @@ if st.session_state.start_analysis:
                     "Data": times_index,
                     "Temp": np.nanmean(list(data_temp.values()), axis=0)[:min_len],
                     "SWE_kg_m2": avg["precip"], "Neve_Fresca_cm": avg["snow"], 
-                    "Neve_Suolo_cm": np.array(avg["depth"])*100, # Export in cm
+                    "Neve_Suolo_HR_cm": np.array(high_res_depth[:min_len])*100 if len(high_res_depth) > 0 else 0,
                     "Vento_kmh": avg["wind"]
                 })
                 csv = df_export.to_csv(index=False).encode('utf-8')
