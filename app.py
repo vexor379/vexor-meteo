@@ -9,9 +9,9 @@ import folium
 from datetime import datetime, timedelta
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
+st.set_page_config(page_title="Vexor Meteo ", page_icon="🏔️", layout="wide") 
 
-st.title("🌍 VEXOR METEO SUITE v7.0 (Season Edition)")
+st.title("VEXOR METEO ")
 
 # --- SESSION STATE ---
 defaults = {
@@ -20,7 +20,7 @@ defaults = {
     'elevation': 1500, # Default Prato Nevoso
     'location_name': "Prato Nevoso (Default)",
     'box_text': "",
-    'start_analysis': False
+    'start_analysis': True
 }
 for key, val in defaults.items():
     if key not in st.session_state: st.session_state[key] = val
@@ -104,20 +104,20 @@ def cerca_citta(nome):
             st.session_state.start_analysis = True
             return True
         else:
-            st.sidebar.warning("❌ Località non trovata.")
+            st.sidebar.warning("Località non trovata.")
             return False
     except: return False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("🎮 Controlli")
+    st.header("Controlli")
     with st.form("analysis_form"):
-        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
-        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
+        city_input = st.text_input("Cerca Località:", value=st.session_state.box_text)
+        giorni = st.selectbox("Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
-        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Lancia Analisi", type="primary", use_container_width=True)
     
-    st.info(f"🏔️ Quota Rilevata: **{st.session_state.elevation:.0f}m**\n\nIl modello verrà forzato a usare questa quota per correggere la neve.")
+    st.info(f"Quota Rilevata: **{st.session_state.elevation:.0f}m**\n\nIl modello verrà forzato a usare questa quota per correggere la neve.")
 
 if submitted and city_input:
     if city_input != st.session_state.location_name:
@@ -147,7 +147,7 @@ if output_mappa['last_clicked']:
 # --- MOTORE ANALISI ---
 if st.session_state.start_analysis:
     st.divider()
-    with st.spinner(f'📡 Analisi Stagionale (1 Nov -> Oggi) + Previsione...'):
+    with st.spinner(f' Analisi Stagionale (1 Nov -> Oggi) + Previsione...'):
         
         df, stats = get_seasonal_analysis(st.session_state.lat, st.session_state.lon, st.session_state.elevation, giorni)
         
@@ -155,7 +155,7 @@ if st.session_state.start_analysis:
             st.error("Errore nel recupero dati stagionali.")
         else:
             # --- DASHBOARD STAGIONALE ---
-            st.subheader("❄️ Bilancio Stagionale (dal 1° Novembre)")
+            st.subheader("Bilancio Stagionale (dal 1° Novembre)")
             
             # Metricona Principale
             c1, c2, c3, c4 = st.columns(4)
@@ -167,7 +167,7 @@ if st.session_state.start_analysis:
             st.markdown("---")
 
             # --- GRAFICO STORICO + PREVISIONE ---
-            t1, t2 = st.tabs(["📉 Grafico Stagionale", "🔍 Focus Previsione"])
+            t1, t2 = st.tabs(["Grafico Stagionale", "Focus Previsione"])
             
             now = pd.Timestamp.now()
             
