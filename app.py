@@ -8,9 +8,9 @@ from streamlit_folium import st_folium
 import folium
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
+st.set_page_config(page_title="Vexor Meteo", page_icon="🏔️", layout="wide") 
 
-st.title("🌍 VEXOR METEO SUITE v6.1 (High-Res Snow)")
+st.title(" VEXOR METEO SUITE")
 
 # --- SESSION STATE ---
 defaults = {
@@ -18,7 +18,7 @@ defaults = {
     'lon': 7.78,
     'location_name': "Prato Nevoso (Default)",
     'box_text': "",
-    'start_analysis': False
+    'start_analysis': True
 }
 for key, val in defaults.items():
     if key not in st.session_state: st.session_state[key] = val
@@ -100,19 +100,19 @@ def cerca_citta(nome):
             st.session_state.start_analysis = True
             return True
         else:
-            st.sidebar.warning("❌ Località non trovata.")
+            st.sidebar.warning("Località non trovata.")
             return False
     except: return False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("🎮 Controlli")
+    st.header("Controlli")
     with st.form("analysis_form"):
-        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
-        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
+        city_input = st.text_input("Cerca Località:", value=st.session_state.box_text)
+        giorni = st.selectbox("Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
-        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
-    st.caption("Vexor Meteo Suite v6.1")
+        submitted = st.form_submit_button("Lancia Analisi", type="primary", use_container_width=True)
+    st.caption("Vexor Meteo")
 
 if submitted and city_input:
     if city_input != st.session_state.location_name:
@@ -191,7 +191,7 @@ if st.session_state.start_analysis:
                 st.markdown("---")
 
                 # --- GRAFICI ---
-                t1, t2, t3, t4 = st.tabs(["🌡️ Temp & Neve", "☁️ Cielo & Sole", "🌬️ Vento & Zero", "📉 Pressione"])
+                t1, t2, t3, t4 = st.tabs(["Temp & Neve", "Cielo & Sole", "Vento & Zero", "Pressione"])
                 date_fmt = mdates.DateFormatter('%d/%m %Hh')
                 
                 def format_xaxis(ax):
@@ -260,7 +260,7 @@ if st.session_state.start_analysis:
 
                 # CSV
                 st.divider()
-                st.subheader("📥 Dati Completi")
+                st.subheader("Dati Completi")
                 df_export = pd.DataFrame({
                     "Data": times_index,
                     "Temp": np.nanmean(list(data_temp.values()), axis=0)[:min_len],
