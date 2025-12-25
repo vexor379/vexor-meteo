@@ -10,7 +10,7 @@ import folium
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
 
-st.title(" VEXOR METEO SUITE v6.1 (High-Res Snow)")
+st.title("🌍 VEXOR METEO SUITE v6.1 (High-Res Snow)")
 
 # --- SESSION STATE ---
 defaults = {
@@ -100,18 +100,18 @@ def cerca_citta(nome):
             st.session_state.start_analysis = True
             return True
         else:
-            st.sidebar.warning(" Località non trovata.")
+            st.sidebar.warning("❌ Località non trovata.")
             return False
     except: return False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header(" Controlli")
+    st.header("🎮 Controlli")
     with st.form("analysis_form"):
-        city_input = st.text_input(" Cerca Località:", value=st.session_state.box_text)
-        giorni = st.selectbox(" Durata Previsione:", [3, 7, 10, 14], index=1)
+        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
+        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
-        submitted = st.form_submit_button("Lancia Analisi", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
     st.caption("Vexor Meteo Suite v6.1")
 
 if submitted and city_input:
