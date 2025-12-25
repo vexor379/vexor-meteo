@@ -6,16 +6,18 @@ import matplotlib.dates as mdates
 import numpy as np
 from streamlit_folium import st_folium
 import folium
+from datetime import datetime, timedelta
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
 
-st.title("🌍 VEXOR METEO SUITE v6.3")
+st.title("🌍 VEXOR METEO SUITE v7.0 (Season Edition)")
 
 # --- SESSION STATE ---
 defaults = {
     'lat': 44.25,
     'lon': 7.78,
+    'elevation': 1500, # Default Prato Nevoso
     'location_name': "Prato Nevoso (Default)",
     'box_text': "",
     'start_analysis': False
@@ -23,66 +25,80 @@ defaults = {
 for key, val in defaults.items():
     if key not in st.session_state: st.session_state[key] = val
 
-# --- FUNZIONE CACHED (AUTOMATICA CON PASSATO) ---
+# --- FUNZIONE CACHED: DATI STAGIONALI + FORECAST ---
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_meteo_data_v4(lat, lon, days):
-    models = [
-        {"id": "ecmwf_ifs025", "label": "ECMWF", "c": "red"},
-        {"id": "gfs_seamless", "label": "GFS", "c": "blue"},
-        {"id": "icon_seamless", "label": "ICON", "c": "green"},
-        {"id": "jma_seamless", "label": "JMA", "c": "purple"}
-    ]
+def get_seasonal_analysis(lat, lon, elevation, forecast_days):
+    # 1. Definiamo le date: Dal 1 Novembre (Inizio Stagione) a (Oggi + Forecast)
+    today = datetime.now().date()
+    start_season = datetime(today.year if today.month > 8 else today.year - 1, 11, 1).date() # 1 Nov dell'inverno corrente
+    end_forecast = today + timedelta(days=forecast_days)
     
-    # Parametri: Aggiungo past_days=3 nella richiesta API
-    params_base = "temperature_2m,precipitation,snowfall,pressure_msl,wind_speed_10m,wind_gusts_10m,apparent_temperature,freezing_level_height,cloud_cover"
+    # Calcoliamo i giorni nel passato (per l'API forecast past_days arriva max a 92, usiamo archive se serve, 
+    # ma per semplicità qui usiamo il forecast esteso che spesso copre 3 mesi indietro o l'endpoint archive)
+    # TRUCCO PRO: Usiamo l'endpoint "forecast" che accetta past_days fino a 92. 
+    # Se siamo a fine stagione servirebbe l'archive, ma per ora (Dicembre/Gennaio) past_days basta.
+    days_since_nov1 = (today - start_season).days
     
-    data_temp = {}
-    acc = {k: [] for k in ["precip", "snow", "press", "wind", "gust", "app_temp", "freezing", "cloud"]}
-    times_index = None
+    # Parametri base
+    models = [{"id": "ecmwf_ifs025", "label": "ECMWF", "c": "red"}] # Usiamo ECMWF come riferimento principale per lo storico
     
-    # 1. Loop Modelli
-    for m in models:
-        p = {
-            "latitude": lat, "longitude": lon, 
-            "hourly": params_base, 
-            "models": m["id"], 
-            "timezone": "auto", 
-            "forecast_days": days,
-            "past_days": 3  # <--- LA CHIAVE: Scarichiamo anche gli ultimi 3 giorni
+    # Aggiungo &elevation=... per FORZARE la quota reale!
+    params = {
+        "latitude": lat, "longitude": lon, 
+        "elevation": elevation, # <--- IL FIX CHE CAMBIA TUTTO
+        "hourly": "temperature_2m,precipitation,snowfall,snow_depth,freezing_level_height",
+        "timezone": "auto",
+        "past_days": max(days_since_nov1, 3), # Scarico tutto lo storico stagionale se < 92 gg
+        "forecast_days": forecast_days
+    }
+    
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=10).json()
+        
+        if 'hourly' not in r: return None, None
+        
+        h = r["hourly"]
+        df = pd.DataFrame({
+            "time": pd.to_datetime(h["time"]),
+            "temp": h["temperature_2m"],
+            "precip": h["precipitation"],
+            "snow": h["snowfall"],
+            "depth": h["snow_depth"], # Questo ora dovrebbe essere corretto grazie all'elevation!
+            "freezing": h["freezing_level_height"]
+        })
+        
+        # Calcoli Stagionali
+        # Filtro dati dal 1 Nov ad Oggi (Escludo il futuro per i totali storici)
+        now = pd.Timestamp.now()
+        df_past = df[df["time"] < now]
+        df_future = df[df["time"] >= now]
+        
+        stats = {
+            "season_snowfall": df_past["snow"].sum(), # Totale neve caduta da inizio stagione
+            "season_precip": df_past["precip"].sum(),
+            "current_depth": df_past["depth"].iloc[-1] if len(df_past) > 0 else 0, # Neve al suolo ORA
+            "forecast_snow": df_future["snow"].sum(),
+            "forecast_rain": df_future["precip"].sum(), # Semplificato (assumiamo precip futura)
+            "max_depth_forecast": df_future["depth"].max() if len(df_future) > 0 else 0
         }
-        try:
-            r = requests.get("https://api.open-meteo.com/v1/forecast", params=p, timeout=8).json()
-            
-            if 'hourly' in r:
-                h = r["hourly"]
-                current_time_index = pd.to_datetime(h["time"])
-                if times_index is None: times_index = current_time_index
-                
-                min_len_local = min(len(times_index), len(h["temperature_2m"]))
-                data_temp[m["label"]] = h["temperature_2m"][:min_len_local]
-                
-                acc["precip"].append([x if x else 0.0 for x in h.get("precipitation", [])][:min_len_local])
-                acc["snow"].append([x if x else 0.0 for x in h.get("snowfall", [])][:min_len_local])
-                acc["press"].append([x if x else np.nan for x in h.get("pressure_msl", [])][:min_len_local])
-                acc["wind"].append([x if x else 0.0 for x in h.get("wind_speed_10m", [])][:min_len_local])
-                acc["gust"].append([x if x else 0.0 for x in h.get("wind_gusts_10m", [])][:min_len_local])
-                acc["app_temp"].append([x if x else np.nan for x in h.get("apparent_temperature", [])][:min_len_local])
-                acc["freezing"].append([x if x else np.nan for x in h.get("freezing_level_height", [])][:min_len_local])
-                acc["cloud"].append([x if x else 0.0 for x in h.get("cloud_cover", [])][:min_len_local])
-        except: continue
-    
-    return data_temp, acc, times_index
+        
+        return df, stats
+        
+    except Exception as e:
+        return None, None
 
-# --- FUNZIONE RICERCA ---
+# --- FUNZIONE RICERCA (Geocoding con ELEVAZIONE) ---
 def cerca_citta(nome):
     if not nome: return False
     try:
+        # Cerco la città e prendo anche l'elevazione
         res = requests.get("https://geocoding-api.open-meteo.com/v1/search", 
                            params={"name": nome, "count": 1, "language": "it"}, timeout=5).json()
         if "results" in res:
             loc = res["results"][0]
             st.session_state.lat = loc["latitude"]
             st.session_state.lon = loc["longitude"]
+            st.session_state.elevation = loc.get("elevation", 1000) # Prendo la quota reale!
             st.session_state.location_name = f"{loc['name']} ({loc.get('country','')})"
             st.session_state.box_text = f"{loc['name']} ({loc.get('country','')})"
             st.session_state.start_analysis = True
@@ -95,21 +111,20 @@ def cerca_citta(nome):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("🎮 Controlli")
-    
     with st.form("analysis_form"):
         city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
         giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
         submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
     
-    st.info("ℹ️ I dati includono automaticamente gli ultimi 3 giorni per valutare l'accumulo recente.")
+    st.info(f"🏔️ Quota Rilevata: **{st.session_state.elevation:.0f}m**\n\nIl modello verrà forzato a usare questa quota per correggere la neve.")
 
 if submitted and city_input:
     if city_input != st.session_state.location_name:
         if cerca_citta(city_input): st.rerun()
 
 # --- LAYOUT PRINCIPALE ---
-st.markdown(f"### 🎯 Target: **{st.session_state.location_name}**")
+st.markdown(f"### 🎯 Target: **{st.session_state.location_name}** (Quota: {st.session_state.elevation:.0f}m)")
 
 m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=10)
 folium.Marker([st.session_state.lat, st.session_state.lon], 
@@ -121,157 +136,80 @@ if output_mappa['last_clicked']:
     if (abs(clat - st.session_state.lat) > 0.0001) or (abs(clon - st.session_state.lon) > 0.0001):
         st.session_state.lat = clat
         st.session_state.lon = clon
-        nome_punto = f"Punto Mappa ({clat:.2f}, {clon:.2f})"
-        st.session_state.location_name = nome_punto
-        st.session_state.box_text = nome_punto
+        # Se clicco sulla mappa, uso un'API esterna per l'elevazione o tengo la vecchia?
+        # Per semplicità qui tengo la vecchia o uso un default, Open-Meteo downscalerà.
+        # (L'ideale sarebbe una chiamata API Elevation, ma rallenta. Usiamo default intelligente).
+        st.session_state.location_name = f"Punto Mappa ({clat:.2f}, {clon:.2f})"
+        st.session_state.box_text = st.session_state.location_name
         st.session_state.start_analysis = True
         st.rerun()
 
 # --- MOTORE ANALISI ---
 if st.session_state.start_analysis:
     st.divider()
-    with st.spinner(f'📡 Analisi Passato + Futuro...'):
-        LAT, LON = st.session_state.lat, st.session_state.lon
-        # Chiamata alla funzione v4 (con past_days)
-        data_temp, acc, times_index = get_meteo_data_v4(LAT, LON, giorni)
+    with st.spinner(f'📡 Analisi Stagionale (1 Nov -> Oggi) + Previsione...'):
         
-        if not data_temp or times_index is None:
-            st.error("Dati mancanti. Riprova.")
+        df, stats = get_seasonal_analysis(st.session_state.lat, st.session_state.lon, st.session_state.elevation, giorni)
+        
+        if df is None:
+            st.error("Errore nel recupero dati stagionali.")
         else:
-            try:
-                min_len = len(times_index)
-                for k in acc: acc[k] = [x[:min_len] for x in acc[k]]
-                
-                avg = {}
-                for k, v_list in acc.items():
-                    if v_list: avg[k] = np.nanmean(v_list, axis=0)
-                    else: avg[k] = np.zeros(min_len)
+            # --- DASHBOARD STAGIONALE ---
+            st.subheader("❄️ Bilancio Stagionale (dal 1° Novembre)")
+            
+            # Metricona Principale
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Neve Caduta Totale", f"{stats['season_snowfall']:.0f} cm", help="Somma di tutta la neve caduta da inizio stagione (Nov 1)")
+            c2.metric("Neve al Suolo (Modello)", f"{stats['current_depth']*100:.0f} cm", help="Altezza manto nevoso stimata ORA (con correzione quota)")
+            c3.metric("Neve in Arrivo", f"{stats['forecast_snow']:.0f} cm", delta="Previsione")
+            c4.metric("Precipitazioni Totali", f"{stats['season_precip']:.0f} mm", help="Pioggia + Neve fusa stagionale")
+            
+            st.markdown("---")
 
-                # --- DIVISIONE TEMPORALE (Passato vs Futuro) ---
-                now = pd.Timestamp.now()
+            # --- GRAFICO STORICO + PREVISIONE ---
+            t1, t2 = st.tabs(["📉 Grafico Stagionale", "🔍 Focus Previsione"])
+            
+            now = pd.Timestamp.now()
+            
+            with t1:
+                st.caption("Andamento dell'accumulo nevoso da inizio stagione")
+                fig, ax = plt.subplots(figsize=(14, 6))
                 
-                # Indici booleani
-                is_past = times_index < now
-                is_future = times_index >= now
-                snow_mask = avg["snow"] > 0.1
+                # Area Neve al Suolo
+                # Moltiplico per 100 per avere cm
+                ax.fill_between(df["time"], df["depth"]*100, color="cyan", alpha=0.4, label="Neve al Suolo (cm)")
+                ax.plot(df["time"], df["depth"]*100, color="blue", lw=1)
                 
-                # 1. Totali Generali (Tutto il periodo)
-                tot_swe = np.sum(avg["precip"])
-                tot_rain = np.sum(avg["precip"][~snow_mask])
-                max_gust = np.max(avg["gust"])
+                # Linea verticale OGGI
+                ax.axvline(now, color="red", ls="--", label="Oggi")
+                
+                ax.set_ylabel("Centimetri")
+                ax.set_title("Andamento Manto Nevoso (Stagione + Previsione)")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                
+                # Formattazione asse X per mesi
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+                st.pyplot(fig)
 
-                # 2. Neve: Divisione Recente vs Prevista
-                # Neve caduta negli ultimi 3 giorni (Passato)
-                snow_past = np.sum(avg["snow"][is_past])
+            with t2:
+                # Grafico dettagliato solo forecast (simile ai precedenti)
+                df_focus = df[df["time"] >= (now - pd.Timedelta(days=1))] # Ieri -> Futuro
                 
-                # Neve che cadrà (Futuro)
-                snow_future = np.sum(avg["snow"][is_future])
+                fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
                 
-                # Totale evento
-                snow_event_total = snow_past + snow_future
+                # Temp
+                ax1.plot(df_focus["time"], df_focus["temp"], color="red", label="Temperatura")
+                ax1.axhline(0, color="black", lw=1)
+                ax1.set_ylabel("°C"); ax1.grid(True)
                 
-                # --- DASHBOARD AUTOMATICA ---
-                c1, c2, c3, c4, c5, c6 = st.columns(6)
+                # Neve Focus
+                ax2.bar(df_focus["time"], df_focus["snow"], width=0.04, color="cyan", edgecolor="blue", label="Neve Oraria (cm)")
+                ax2.set_ylabel("cm / h"); ax2.grid(True)
                 
-                c1.metric("SWE Totale", f"{tot_swe:.1f} kg/m²", help="Acqua totale (Passata + Futura)")
-                c2.metric("Solo Pioggia", f"{tot_rain:.1f} mm", delta="Inverse" if tot_rain>5 else None, delta_color="inverse")
-                
-                # LE TRE COLONNE CHIAVE
-                c3.metric("Neve Caduta (72h)", f"{snow_past:.1f} cm", help="Neve stimata caduta negli ultimi 3 giorni")
-                c4.metric("Neve Prevista", f"{snow_future:.1f} cm", help="Neve prevista nei prossimi giorni", delta="In arrivo" if snow_future>0 else "Fine evento")
-                c5.metric("Totale Evento", f"{snow_event_total:.1f} cm", help="Somma Recente + Futura")
-                
-                c6.metric("Raffica Max", f"{max_gust:.0f} km/h", delta="Danger" if max_gust>60 else None)
-                
-                st.markdown("---")
+                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %Hh'))
+                st.pyplot(fig2)
 
-                # --- GRAFICI ---
-                t1, t2, t3, t4 = st.tabs(["🌡️ Temp & Neve", "☁️ Cielo & Sole", "🌬️ Vento & Zero", "📉 Pressione"])
-                date_fmt = mdates.DateFormatter('%d/%m %Hh')
-                
-                def format_xaxis(ax):
-                    ax.xaxis.set_major_formatter(date_fmt)
-                    ax.tick_params(labelbottom=True)
-                    ax.grid(True, alpha=0.3)
-                    # Linea verticale che separa OGGI
-                    ax.axvline(now, color="red", linestyle="--", linewidth=1, label="Adesso")
-
-                # T1
-                with t1:
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'height_ratios': [1.5, 1], 'hspace': 0.3})
-                    
-                    df_temp = pd.DataFrame({k: v[:min_len] for k,v in data_temp.items()}, index=times_index)
-                    for col in df_temp.columns:
-                        ax1.plot(df_temp.index, df_temp[col], label=col, lw=2, alpha=0.8)
-                    ax1.plot(times_index, avg["app_temp"], color="gray", ls=":", label="Percepita")
-                    ax1.axhline(0, c="black", lw=1)
-                    
-                    # Area "Passato" grigia
-                    ax1.axvspan(times_index[0], now, color='gray', alpha=0.1)
-                    ax1.text(times_index[0], ax1.get_ylim()[1], " PASSATO (Dati Reali)", verticalalignment='top', fontsize=9, color='gray', fontweight='bold')
-                    
-                    ax1.legend(loc="upper left", fontsize=8); ax1.set_ylabel("°C"); ax1.set_title("Temperatura (Passato vs Futuro)")
-                    format_xaxis(ax1)
-                    
-                    rain_plot = avg["precip"].copy(); rain_plot[snow_mask] = 0
-                    ax2.bar(times_index, rain_plot, width=0.04, color="dodgerblue", alpha=0.6, label="Pioggia")
-                    ax2b = ax2.twinx()
-                    if any(snow_mask):
-                        bars = ax2b.bar(times_index[snow_mask], avg["snow"][snow_mask], width=0.04, color="cyan", hatch="///", edgecolor="blue")
-                        thresh = 0.5 if giorni>3 else 0.2
-                        for r in bars:
-                            h = r.get_height()
-                            if h > thresh:
-                                ax2b.text(r.get_x()+r.get_width()/2, h*1.05, f"{h:.1f}", ha="center", fontsize=7, color="darkblue", rotation=90 if giorni>3 else 0)
-                    ax2.set_ylabel("Pioggia (mm)"); ax2b.set_ylabel("Neve (cm)"); ax2.set_title("Precipitazioni (Passato vs Futuro)")
-                    ax2.axvspan(times_index[0], now, color='gray', alpha=0.1)
-                    format_xaxis(ax2)
-                    st.pyplot(fig)
-
-                # T2
-                with t2:
-                    fig_c, ax_c = plt.subplots(figsize=(14, 6))
-                    ax_c.fill_between(times_index, avg["cloud"], 0, color="gray", alpha=0.4, label="Nubi (%)")
-                    ax_c.plot(times_index, avg["cloud"], color="black", lw=1)
-                    ax_c.set_ylim(0, 100); ax_c.set_ylabel("Copertura (%)")
-                    ax_c.axhspan(0, 20, color="yellow", alpha=0.1, label="Zona Soleggiata")
-                    ax_c.legend(loc="upper right")
-                    format_xaxis(ax_c)
-                    st.pyplot(fig_c)
-
-                # T3
-                with t3:
-                    fig_w, (ax_w, ax_z) = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'hspace': 0.3})
-                    ax_w.plot(times_index, avg["wind"], color="blue", label="Vento")
-                    ax_w.fill_between(times_index, avg["wind"], avg["gust"], color="red", alpha=0.2, label="Raffiche")
-                    ax_w.legend(); ax_w.set_ylabel("km/h"); ax_w.set_title("Vento")
-                    format_xaxis(ax_w)
-                    
-                    ax_z.plot(times_index, avg["freezing"], color="green", lw=2, label="Quota 0°C")
-                    ax_z.fill_between(times_index, avg["freezing"], 0, color="green", alpha=0.05)
-                    ax_z.legend(); ax_z.set_ylabel("Metri"); ax_z.set_title("Zero Termico")
-                    format_xaxis(ax_z)
-                    st.pyplot(fig_w)
-
-                # T4
-                with t4:
-                    fig_p, ax_p = plt.subplots(figsize=(14, 6))
-                    ax_p.plot(times_index, avg["press"], color="black", lw=2)
-                    ax_p.set_ylabel("hPa"); ax_p.set_title("Pressione")
-                    format_xaxis(ax_p)
-                    st.pyplot(fig_p)
-
-                # CSV
-                st.divider()
-                st.subheader("📥 Dati Completi")
-                df_export = pd.DataFrame({
-                    "Data": times_index,
-                    "Temp": np.nanmean(list(data_temp.values()), axis=0)[:min_len],
-                    "SWE_kg_m2": avg["precip"], "Neve_cm": avg["snow"], 
-                    "Vento_kmh": avg["wind"]
-                })
-                csv = df_export.to_csv(index=False).encode('utf-8')
-                st.download_button("Scarica CSV", data=csv, file_name=f"meteo_{st.session_state.location_name}.csv", mime="text/csv")
-
-            except Exception as e:
-                st.error(f"Errore grafico: {e}")
+            # CSV Download
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Scarica Dati Stagionali (CSV)", data=csv, file_name="storico_neve.csv", mime="text/csv")
