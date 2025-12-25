@@ -25,7 +25,7 @@ for key, val in defaults.items():
 
 # --- FUNZIONE CACHED ---
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_meteo_data(lat, lon, days):
+def get_meteo_data_v2(lat, lon, days):
     # 1. DATI GENERALI (Uso i modelli globali per le tendenze a lungo termine)
     models = [
         {"id": "ecmwf_ifs025", "label": "ECMWF", "c": "red"},
@@ -143,7 +143,7 @@ if st.session_state.start_analysis:
     with st.spinner(f'📡 Analisi High-Res in corso...'):
         LAT, LON = st.session_state.lat, st.session_state.lon
         # Chiamata aggiornata che restituisce anche high_res_depth
-        data_temp, acc, times_index, high_res_depth = get_meteo_data(LAT, LON, giorni)
+        data_temp, acc, times_index, high_res_depth = get_meteo_data_v2(LAT, LON, giorni)
         
         if not data_temp or times_index is None:
             st.error("Dati mancanti. Riprova.")
