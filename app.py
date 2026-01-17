@@ -9,9 +9,9 @@ import folium
 from datetime import datetime, timedelta
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Vexor Meteo Suite", page_icon="🏔️", layout="wide") 
+st.set_page_config(page_title="Meteo Suite", page_icon="🏔️", layout="wide") 
 
-st.title("🌍 VEXOR METEO SUITE v9.0 (Time Machine)")
+st.title("🌍 METEO SUITE v9.0")
 
 # --- SESSION STATE ---
 defaults = {
@@ -20,7 +20,7 @@ defaults = {
     'elevation': 1500, # Default Prato Nevoso
     'location_name': "Prato Nevoso (Default)",
     'box_text': "",
-    'start_analysis': False
+    'start_analysis': True
 }
 for key, val in defaults.items():
     if key not in st.session_state: st.session_state[key] = val
@@ -171,27 +171,27 @@ def cerca_citta(nome):
             st.session_state.start_analysis = True
             return True
         else:
-            st.sidebar.warning("❌ Località non trovata.")
+            st.sidebar.warning("Località non trovata.")
             return False
     except: return False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("🎮 Controlli")
+    st.header("Controlli")
     with st.form("analysis_form"):
-        city_input = st.text_input("📍 Cerca Località:", value=st.session_state.box_text)
-        giorni = st.selectbox("📅 Durata Previsione:", [3, 7, 10, 14], index=1)
+        city_input = st.text_input("Cerca Località:", value=st.session_state.box_text)
+        giorni = st.selectbox("Durata Previsione:", [3, 7, 10, 14], index=1)
         st.markdown("---")
-        submitted = st.form_submit_button("Lancia Analisi 🚀", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Lancia Analisi", type="primary", use_container_width=True)
     
-    st.info(f"🏔️ Quota Forzata: **{st.session_state.elevation:.0f}m**")
+    st.info(f"Quota Forzata: **{st.session_state.elevation:.0f}m**")
 
 if submitted and city_input:
     if city_input != st.session_state.location_name:
         if cerca_citta(city_input): st.rerun()
 
 # --- LAYOUT PRINCIPALE ---
-st.markdown(f"### 🎯 Target: **{st.session_state.location_name}**")
+st.markdown(f"### Target: **{st.session_state.location_name}**")
 
 m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=10)
 folium.Marker([st.session_state.lat, st.session_state.lon], 
@@ -224,7 +224,7 @@ if st.session_state.start_analysis:
         df_season = get_full_seasonal_history(st.session_state.lat, st.session_state.lon, st.session_state.elevation)
 
     if not data_temp or times_index is None:
-        st.error("⚠️ Errore connessione dati. Riprova.")
+        st.error("Errore connessione dati. Riprova.")
     else:
         try:
             min_len = len(times_index)
@@ -278,7 +278,7 @@ if st.session_state.start_analysis:
         # --- VISUALIZZAZIONE ---
         
         # CRUSCOTTO
-        st.subheader("📊 Cruscotto Unificato (Full Season)")
+        st.subheader("Cruscotto Unificato (Full Season)")
         c1, c2, c3, c4, c5 = st.columns(5)
         
         c1.metric("Neve Stagione", f"{season_stats['total']:.0f} cm", help="Totale reale dal 1° Novembre (Archive + Forecast)")
@@ -290,7 +290,7 @@ if st.session_state.start_analysis:
         st.markdown("---")
 
         # TABS
-        tabs = st.tabs(["🔍 Analisi Dettagliata", "📉 Grafico Stagionale", "☁️ Cielo & Vento", "🎈 Pressione"])
+        tabs = st.tabs(["Analisi Dettagliata", "Grafico Stagionale", "Cielo & Vento", "Pressione"])
         date_fmt = mdates.DateFormatter('%d/%m %Hh', tz=times_index.tzinfo)
         season_fmt = mdates.DateFormatter('%d %b', tz=times_index.tzinfo)
         
